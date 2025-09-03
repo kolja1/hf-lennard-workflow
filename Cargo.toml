@@ -1,0 +1,65 @@
+[workspace]
+members = [
+    "crates/workflow-types",
+    "crates/workflow-core",
+    "crates/workflow-grpc",
+    "crates/workflow-server",
+    "crates/zoho-generated-types",
+    "crates/dossier-grpc-client",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+authors = ["Lennard Development Team"]
+license = "MIT"
+repository = "https://github.com/hf-lennard/rust-workflow"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# gRPC and protobuf
+tonic = "0.10"
+prost = "0.12"
+prost-types = "0.12"
+tonic-build = "0.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream", "multipart"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.21"
+async-trait = "0.1"
+futures = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Configuration
+config = "0.13"
+
+# Testing
+tempfile = "3.8"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Regex for parsing
+regex = "1.10"
+
+# File system monitoring  
+notify = "6.1"

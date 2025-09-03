@@ -1,0 +1,90 @@
+syntax = "proto3";
+package lennard.workflow.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Core workflow trigger
+message WorkflowTrigger {
+  string trigger_id = 1;
+  int64 requested_by = 2;
+  google.protobuf.Timestamp requested_at = 3;
+  uint32 max_tasks = 4;
+  bool dry_run = 5;
+}
+
+// Workflow state
+message WorkflowState {
+  string workflow_id = 1;
+  
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_PENDING = 1;
+    STATUS_RUNNING = 2;
+    STATUS_WAITING_APPROVAL = 3;
+    STATUS_COMPLETED = 4;
+    STATUS_FAILED = 5;
+  }
+  Status status = 2;
+  
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp updated_at = 4;
+  repeated TaskResult task_results = 5;
+  optional string error_message = 6;
+  uint32 total_tasks = 7;
+  uint32 completed_tasks = 8;
+}
+
+// Task processing result
+message TaskResult {
+  string task_id = 1;
+  string contact_name = 2;
+  string company_name = 3;
+  bool success = 4;
+  optional string tracking_id = 5;
+  optional string error_message = 6;
+  google.protobuf.Timestamp processed_at = 7;
+}
+
+// Zoho Task representation
+message ZohoTask {
+  string id = 1;
+  string subject = 2;
+  string status = 3;
+  optional string description = 4;
+  optional ContactReference who_id = 5;
+  optional CompanyReference what_id = 6;
+  string created_time = 7;
+  string due_date = 8;
+  string priority = 9;
+}
+
+message ContactReference {
+  string id = 1;
+  string name = 2;
+}
+
+message CompanyReference {
+  string id = 1;
+  string name = 2;
+}
+
+// Contact information
+message Contact {
+  string id = 1;
+  string full_name = 2;
+  string first_name = 3;
+  string last_name = 4;
+  optional string email = 5;
+  optional string phone = 6;
+  optional string company = 7;
+  optional string linkedin_id = 8;
+  optional MailingAddress mailing_address = 9;
+}
+
+message MailingAddress {
+  string street = 1;
+  string city = 2;
+  optional string state = 3;
+  string postal_code = 4;
+  string country = 5;
+}

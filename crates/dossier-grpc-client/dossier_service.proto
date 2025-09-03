@@ -1,0 +1,210 @@
+syntax = "proto3";
+
+package dossier.v1;
+
+// Error codes for dossier service operations
+// These are used in the gRPC rich error model via grpc-status metadata
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  MCP_SERVER_UNAVAILABLE = 1;      // MCP server is not responding
+  MCP_BROWSER_FAILED = 2;          // MCP server up but browser not working
+  LINKEDIN_PROFILE_INVALID = 3;    // Invalid or malformed LinkedIn data
+  COMPANY_WEBSITE_NOT_FOUND = 4;   // No website found in profile
+  WEBSITE_SCRAPING_FAILED = 5;     // Website exists but can't be scraped
+  AI_SERVICE_ERROR = 6;            // OpenAI API failures
+  TIMEOUT = 7;                     // Operation exceeded time limit
+}
+
+// DossierService provides operations for generating and managing dossiers
+service DossierService {
+  // Generate person dossier from LinkedIn profile data
+  rpc GeneratePersonDossier(PersonDossierRequest) returns (PersonDossier);
+  
+  // Generate company dossier from company website URL
+  rpc GenerateCompanyDossier(CompanyDossierRequest) returns (CompanyDossier);
+  
+  // Generate both dossiers in one call
+  rpc GenerateBothDossiers(BothDossiersRequest) returns (DossierBundle);
+  
+  // Extract structured address from company dossier content
+  rpc ExtractAddressFromDossier(AddressExtractionRequest) returns (ExtractedAddress);
+  
+  // Extract company name from company dossier content
+  rpc ExtractCompanyNameFromDossier(CompanyNameExtractionRequest) returns (ExtractedCompanyInfo);
+}
+
+// Request for generating person dossier
+message PersonDossierRequest {
+  string zoho_contact_id = 1;
+  string linkedin_id = 2;
+  string linkedin_profile_json = 3;
+}
+
+// Request for generating company dossier
+message CompanyDossierRequest {
+  string company_url = 1;  // Required: The company website URL to scrape
+  string preferred_location = 2;  // Optional: Location for address proximity validation
+}
+
+// Request for generating both dossiers
+message BothDossiersRequest {
+  string zoho_contact_id = 1;
+  string linkedin_id = 2;
+  string linkedin_profile_json = 3;
+  bool extract_address = 4;
+  bool extract_company_name = 5;
+  string preferred_location = 6;  // Optional location for address proximity validation
+}
+
+// Request for extracting address from company dossier
+message AddressExtractionRequest {
+  // Company dossier content in markdown format
+  string company_dossier_markdown = 1;
+  
+  // Optional: expected company name to improve extraction accuracy
+  optional string expected_company_name = 2;
+}
+
+// Request for extracting company name from company dossier
+message CompanyNameExtractionRequest {
+  // Company dossier content in markdown format
+  string company_dossier_markdown = 1;
+}
+
+// Person dossier with specific fields
+message PersonDossier {
+  // Markdown content of the person dossier
+  string content = 1;
+  
+  // Person's full name
+  string full_name = 2;
+  
+  // Current job title
+  string current_title = 3;
+  
+  // Current company (from LinkedIn profile)
+  string current_company = 4;
+  
+  // LinkedIn profile URL
+  string linkedin_url = 5;
+  
+  // Key skills extracted
+  repeated string skills = 6;
+  
+  // Generation metadata
+  DossierMetadata metadata = 7;
+}
+
+// Company dossier with specific fields and extracted data
+message CompanyDossier {
+  // Markdown content of the company dossier
+  string content = 1;
+  
+  // Extracted company name
+  string company_name = 2;
+  
+  // Company website URL
+  string website_url = 3;
+  
+  // Industry/sector
+  string industry = 4;
+  
+  // Extracted mailing address (if found and requested)
+  ExtractedAddress mailing_address = 5;
+  
+  // Whether address was successfully extracted
+  bool address_found = 6;
+  
+  // Contact information
+  ContactInfo contact_info = 7;
+  
+  // Generation metadata
+  DossierMetadata metadata = 8;
+}
+
+// Bundle containing both dossiers
+message DossierBundle {
+  PersonDossier person_dossier = 1;
+  CompanyDossier company_dossier = 2;
+  string generated_at = 3;  // ISO 8601 timestamp
+}
+
+// Metadata about dossier generation
+message DossierMetadata {
+  // Generation status: "success", "failed", "partial"
+  string status = 1;
+  
+  // Processing time in seconds
+  double processing_time = 2;
+  
+  // Error message if generation failed
+  string error_message = 3;
+  
+  // Word count of the content
+  int32 word_count = 4;
+  
+  // Source URLs that were scraped (for company dossier)
+  repeated string source_urls = 5;
+  
+  // Quality indicators
+  bool has_complete_info = 6;
+  double confidence_score = 7;  // 0.0 to 1.0
+}
+
+// Extracted mailing address
+message ExtractedAddress {
+  // Street name and house number (corresponds to Mailing_Street)
+  string street = 1;
+  
+  // City name (corresponds to Mailing_City)
+  string city = 2;
+  
+  // Postal/ZIP code (corresponds to Mailing_Zip)
+  string postal_code = 3;
+  
+  // State or region (corresponds to Mailing_State)
+  string state = 4;
+  
+  // Country (corresponds to Mailing_Country)
+  string country = 5;
+  
+  // Full formatted address as single string
+  string formatted_address = 6;
+  
+  // Extraction confidence score (0.0 to 1.0)
+  double confidence = 7;
+  
+  // Source where address was found
+  string source = 8;
+  
+  // Whether this was successfully extracted
+  bool found = 9;
+}
+
+// Company contact information
+message ContactInfo {
+  string phone = 1;
+  string email = 2;
+  string fax = 3;
+  
+  // Social media handles (key: platform, value: handle/url)
+  map<string, string> social_media = 4;
+}
+
+// Extracted company information
+message ExtractedCompanyInfo {
+  // Primary company name
+  string company_name = 1;
+  
+  // Alternative names/variations found
+  repeated string alternative_names = 2;
+  
+  // Legal entity name if different
+  string legal_name = 3;
+  
+  // Whether extraction was successful
+  bool found = 4;
+  
+  // Extraction confidence (0.0 to 1.0)
+  double confidence = 5;
+}

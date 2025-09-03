@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  workflow-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Stop at builder stage for development
+    container_name: rust-workflow-dev
+    command: cargo watch -x "run --bin workflow-server -- --grpc-server"
+    ports:
+      - "50051:50051"  # gRPC port
+    volumes:
+      - ./:/usr/src/app  # Mount source code for hot reload
+      - ./config:/app/config:ro
+      - workflow-data:/data
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-cache:/usr/src/app/target
+    environment:
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=1
+      - GRPC_PORT=50051
+    networks:
+      - workflow-network
+    restart: unless-stopped
+
+  # Development tools
+  grpc-ui:
+    image: fullstorydev/grpcui:latest
+    container_name: grpc-ui
+    command: -plaintext -port 8080 workflow-server:50051
+    ports:
+      - "8080:8080"  # Web UI for gRPC
+    networks:
+      - workflow-network
+    depends_on:
+      - workflow-server
+
+volumes:
+  workflow-data:
+    driver: local
+  cargo-cache:
+    driver: local
+  cargo-git:
+    driver: local
+  target-cache:
+    driver: local
+
+networks:
+  workflow-network:
+    driver: bridge

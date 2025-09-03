@@ -1,0 +1,207 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Zoho CRM Tasks API",
+    "version": "v2"
+  },
+  "paths": {
+    "/crm/v2/Tasks": {
+      "get": {
+        "operationId": "get_tasks",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TasksApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TasksResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "Created_By": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "Created_Time": {
+            "description": "ISO 8601 datetime string",
+            "type": "string"
+          },
+          "Modified_By": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "Modified_Time": {
+            "description": "ISO 8601 datetime string",
+            "type": "string"
+          },
+          "Tag": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Owner": {
+            "$ref": "#/components/schemas/UserReference"
+          },
+          "Subject": {
+            "type": "string"
+          },
+          "Due_Date": {
+            "description": "ISO 8601 date string",
+            "type": "string"
+          },
+          "Who_Id": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "What_Id": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "Status": {
+            "type": "string"
+          },
+          "Priority": {
+            "type": "string"
+          },
+          "Description": {
+            "type": "string"
+          },
+          "Send_Notification_Email": {
+            "type": "boolean"
+          },
+          "Remind_At": {
+            "type": "string"
+          },
+          "Recurring_Activity": {
+            "type": "string"
+          },
+          "Closed_Time": {
+            "description": "ISO 8601 datetime string",
+            "type": "string"
+          },
+          "Locked__s": {
+            "type": "boolean"
+          },
+          "Last_Activity_Time": {
+            "description": "ISO 8601 datetime string",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "Subject"
+        ]
+      },
+      "TasksApiResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TasksResponse"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ContactReference": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "RecordReference": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "UserReference": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  }
+}

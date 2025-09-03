@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # Initialize volume permissions
+  init-volumes:
+    image: busybox
+    container_name: init-volumes
+    command: >
+      sh -c "
+      mkdir -p /data/workflows &&
+      mkdir -p /logs/grpc/dossier &&
+      chown -R 1000:1000 /data &&
+      chown -R 1000:1000 /logs &&
+      echo 'Volume permissions initialized'
+      "
+    volumes:
+      - ./docker/volumes/workflow-data:/data
+      - ./docker/volumes/logs:/logs
+    user: "0:0"  # Run as root to set permissions
+    
+  workflow-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rust-workflow-server
+    depends_on:
+      init-volumes:
+        condition: service_completed_successfully
+    network_mode: host  # Use host network to access local services
+    volumes:
+      - ./config:/app/config:ro  # Configuration files
+      - ./docker/volumes/workflow-data:/data  # Persistent workflow data (local bind mount)
+      - ./docker/volumes/logs:/logs  # Logs directory for debugging
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "workflow-server", "--help"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

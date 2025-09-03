@@ -1,0 +1,169 @@
+syntax = "proto3";
+package lennard.workflow.v1;
+
+import "workflow_types.proto";
+import "approval_types.proto";
+import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// Main workflow service
+service WorkflowService {
+  // Trigger workflow processing
+  rpc TriggerWorkflow(WorkflowTrigger) returns (WorkflowState);
+  
+  // Get workflow state
+  rpc GetWorkflowState(GetWorkflowStateRequest) returns (WorkflowState);
+  
+  // List workflows
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  
+  // Stream workflow updates (server-side streaming)
+  rpc StreamWorkflowUpdates(StreamWorkflowRequest) returns (stream WorkflowUpdate);
+  
+  // Cancel workflow
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (WorkflowState);
+  
+  // Get workflow metrics
+  rpc GetWorkflowMetrics(GetMetricsRequest) returns (WorkflowMetrics);
+}
+
+// Approval service
+service ApprovalService {
+  // Submit approval decision
+  rpc SubmitApproval(ApprovalResponse) returns (ApprovalState);
+  
+  // Get pending approvals
+  rpc GetPendingApprovals(GetPendingApprovalsRequest) returns (GetPendingApprovalsResponse);
+  
+  // Get approval state
+  rpc GetApprovalState(GetApprovalStateRequest) returns (ApprovalState);
+  
+  // Stream approval updates
+  rpc StreamApprovalUpdates(StreamApprovalRequest) returns (stream ApprovalUpdate);
+  
+  // Download PDF
+  rpc DownloadApprovalPdf(DownloadPdfRequest) returns (PdfDocument);
+  
+  // Regenerate PDF after revision
+  rpc RegeneratePdf(RegeneratePdfRequest) returns (PdfDocument);
+}
+
+// Health check service (standard gRPC health checking)
+service Health {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse);
+}
+
+// Request/Response messages
+message GetWorkflowStateRequest {
+  string workflow_id = 1;
+}
+
+message ListWorkflowsRequest {
+  optional bool active_only = 1;
+  optional PaginationRequest pagination = 2;
+  optional WorkflowFilter filter = 3;
+}
+
+message WorkflowFilter {
+  optional WorkflowState.Status status = 1;
+  optional int64 requested_by = 2;
+  optional string date_from = 3;
+  optional string date_to = 4;
+}
+
+message ListWorkflowsResponse {
+  repeated WorkflowState workflows = 1;
+  optional PaginationResponse pagination = 2;
+}
+
+message StreamWorkflowRequest {
+  string workflow_id = 1;
+}
+
+message WorkflowUpdate {
+  string workflow_id = 1;
+  WorkflowState.Status status = 2;
+  optional TaskResult latest_task = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  string message = 5;
+}
+
+message CancelWorkflowRequest {
+  string workflow_id = 1;
+  string reason = 2;
+}
+
+message GetMetricsRequest {
+  optional string from_date = 1;
+  optional string to_date = 2;
+}
+
+message WorkflowMetrics {
+  uint32 total_workflows = 1;
+  uint32 completed_workflows = 2;
+  uint32 failed_workflows = 3;
+  uint32 active_workflows = 4;
+  double average_processing_time_seconds = 5;
+  uint32 total_tasks_processed = 6;
+}
+
+message GetPendingApprovalsRequest {
+  optional uint32 limit = 1;
+  optional int64 for_user = 2;
+}
+
+message GetPendingApprovalsResponse {
+  repeated ApprovalRequest approvals = 1;
+  uint32 total_count = 2;
+}
+
+message GetApprovalStateRequest {
+  string approval_id = 1;
+}
+
+message StreamApprovalRequest {
+  optional int64 user_id = 1;
+}
+
+message ApprovalUpdate {
+  string approval_id = 1;
+  ApprovalState.Status status = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  optional string message = 4;
+}
+
+message DownloadPdfRequest {
+  string approval_id = 1;
+  optional uint32 iteration_number = 2;
+}
+
+message PdfDocument {
+  bytes content = 1;
+  string filename = 2;
+  string mime_type = 3;
+  uint32 size_bytes = 4;
+  google.protobuf.Timestamp generated_at = 5;
+}
+
+message RegeneratePdfRequest {
+  string approval_id = 1;
+  string revised_letter_content = 2;
+  map<string, string> contact_info = 3;
+  map<string, string> company_info = 4;
+}
+
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+}

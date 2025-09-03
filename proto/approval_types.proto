@@ -1,0 +1,74 @@
+syntax = "proto3";
+package lennard.workflow.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Approval request with PDF
+message ApprovalRequest {
+  string approval_id = 1;
+  string workflow_id = 2;
+  string contact_name = 3;
+  string company_name = 4;
+  string letter_content = 5;
+  
+  // PDF data for approval review
+  bytes pdf_content = 6;
+  string pdf_filename = 7;
+  
+  // Optional external storage URL
+  optional string pdf_url = 8;
+  
+  google.protobuf.Timestamp created_at = 9;
+  
+  // Additional metadata
+  string task_id = 10;
+  string contact_id = 11;
+  optional string tracking_info = 12;
+}
+
+// Approval response
+message ApprovalResponse {
+  string approval_id = 1;
+  
+  enum Decision {
+    DECISION_UNSPECIFIED = 0;
+    DECISION_APPROVED = 1;
+    DECISION_REJECTED = 2;
+    DECISION_NEEDS_REVISION = 3;
+  }
+  Decision decision = 2;
+  
+  optional string feedback = 3;
+  optional string revised_letter_content = 4;
+  google.protobuf.Timestamp decided_at = 5;
+  int64 decided_by = 6;
+}
+
+// Approval state with history
+message ApprovalState {
+  string approval_id = 1;
+  
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_PENDING = 1;
+    STATUS_APPROVED = 2;
+    STATUS_REJECTED = 3;
+    STATUS_EXPIRED = 4;
+    STATUS_IN_REVISION = 5;
+  }
+  Status status = 2;
+  
+  repeated ApprovalIteration iterations = 3;
+  optional bytes final_pdf = 4;
+  optional string final_pdf_filename = 5;
+}
+
+message ApprovalIteration {
+  uint32 iteration_number = 1;
+  string letter_content = 2;
+  bytes pdf_content = 3;
+  string pdf_filename = 4;
+  optional string feedback = 5;
+  google.protobuf.Timestamp created_at = 6;
+  optional int64 feedback_by = 7;
+}

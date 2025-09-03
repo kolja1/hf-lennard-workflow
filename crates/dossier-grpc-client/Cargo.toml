@@ -1,0 +1,16 @@
+[package]
+name = "dossier-grpc-client"
+version = "1.0.0"
+edition = "2021"
+authors = ["Lennard Development Team"]
+description = "gRPC client for LinkedIn Dossier Service"
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.11"

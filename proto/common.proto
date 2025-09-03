@@ -1,0 +1,21 @@
+syntax = "proto3";
+package lennard.workflow.v1;
+
+// Common error details
+message ErrorDetails {
+  string code = 1;
+  string message = 2;
+  map<string, string> metadata = 3;
+}
+
+// Pagination request
+message PaginationRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+}
+
+// Pagination response
+message PaginationResponse {
+  string next_page_token = 1;
+  uint32 total_count = 2;
+}
