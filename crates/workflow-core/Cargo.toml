@@ -17,6 +17,7 @@ integration = []
 # Generated types
 zoho-generated-types = { path = "../zoho-generated-types" }
 dossier-grpc-client = { path = "../dossier-grpc-client" }
+letter-grpc-client = { path = "../letter-grpc-client" }
 
 # Use workspace dependencies
 tokio = { workspace = true }

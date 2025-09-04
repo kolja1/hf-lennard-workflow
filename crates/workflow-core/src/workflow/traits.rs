@@ -32,8 +32,8 @@ pub trait WorkflowSteps: Send + Sync {
     /// Step 4.5: Update contact address in Zoho CRM
     async fn update_contact_address(&self, contact_id: &str, address: &MailingAddress) -> Result<()>;
     
-    /// Step 5: Generate letter - requires contact and profile, returns required LetterContent
-    async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile) -> Result<LetterContent>;
+    /// Step 5: Generate letter - requires contact, profile and dossier, returns required LetterContent
+    async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile, dossier: &DossierResult) -> Result<LetterContent>;
     
     /// Step 6: Request approval - requires letter, returns approval status
     /// Note: This may create long-running approval requests handled by ApprovalQueue

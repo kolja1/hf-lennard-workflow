@@ -9,8 +9,8 @@ use workflow_core::{
     LennardConfig, 
     workflow::{WorkflowOrchestrator, approval_types::WorkflowTrigger}, 
     services::WorkflowProcessor,
-    clients::{BaserowClient, ZohoClient, DossierClient, LetterExpressClient, PDFService, TelegramClient},
-    services::{AddressExtractor, LetterGenerator},
+    clients::{BaserowClient, ZohoClient, DossierClient, LetterExpressClient, LetterServiceClient, PDFService, TelegramClient},
+    services::AddressExtractor,
     paths,
 };
 use std::sync::Arc;
@@ -76,6 +76,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .help("Logs directory for debugging")
                 .default_value("/logs")
         )
+        .arg(
+            Arg::new("templates-dir")
+                .long("templates-dir")
+                .value_name("DIR")
+                .help("Templates directory for ODT templates")
+                .default_value("/app/templates")
+        )
         .get_matches();
     
     // Initialize data directory
@@ -92,6 +99,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log::warn!("Logs root initialization warning: {}", e);
     }
     log::info!("Using logs directory: {}", logs_dir);
+    
+    // Initialize templates directory
+    let templates_dir = matches.get_one::<String>("templates-dir").unwrap();
+    if let Err(e) = paths::init_templates_root(templates_dir.clone()) {
+        log::warn!("Templates root initialization warning: {}", e);
+    }
+    log::info!("Using templates directory: {}", templates_dir);
     
     // Load configuration
     let config_path = matches.get_one::<String>("config").unwrap();
@@ -120,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let letterexpress_client = Arc::new(LetterExpressClient::new(config.letterexpress.clone()));
     let pdf_service = Arc::new(PDFService::new(config.pdf_service.clone()));
     let address_extractor = Arc::new(AddressExtractor::new(config.openai.clone()));
-    let letter_generator = Arc::new(LetterGenerator::new(config.openai.clone()));
+    let letter_service = Arc::new(LetterServiceClient::new(config.letter_service.clone()));
     let telegram_client = Arc::new(TelegramClient::new(config.telegram.clone()));
     
     // Create ApprovalQueue with the workflows data directory
@@ -138,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         letterexpress_client,
         pdf_service,
         address_extractor,
-        letter_generator,
+        letter_service,
         telegram_client,
         approval_queue,
     );

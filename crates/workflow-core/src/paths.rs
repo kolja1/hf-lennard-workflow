@@ -8,9 +8,13 @@ static DATA_ROOT: OnceCell<String> = OnceCell::new();
 // Static storage for configurable logs root
 static LOGS_ROOT: OnceCell<String> = OnceCell::new();
 
+// Static storage for configurable templates root
+static TEMPLATES_ROOT: OnceCell<String> = OnceCell::new();
+
 // Default root constants
 const DEFAULT_WORKFLOW_DATA_ROOT: &str = "/data/workflows";
 const DEFAULT_LOGS_ROOT: &str = "/logs";
+const DEFAULT_TEMPLATES_ROOT: &str = "/app/templates";
 pub const APP_ROOT: &str = "/app";
 
 /// Initialize the data root directory. Can only be called once.
@@ -25,6 +29,12 @@ pub fn init_logs_root(path: String) -> Result<(), String> {
     LOGS_ROOT.set(path).map_err(|_| "Logs root already initialized".to_string())
 }
 
+/// Initialize the templates root directory. Can only be called once.
+/// If not called, the default `/app/templates` will be used.
+pub fn init_templates_root(path: String) -> Result<(), String> {
+    TEMPLATES_ROOT.set(path).map_err(|_| "Templates root already initialized".to_string())
+}
+
 /// Get the configured data root or the default
 fn get_data_root() -> &'static str {
     DATA_ROOT.get().map(|s| s.as_str()).unwrap_or(DEFAULT_WORKFLOW_DATA_ROOT)
@@ -33,6 +43,11 @@ fn get_data_root() -> &'static str {
 /// Get the configured logs root or the default
 fn get_logs_root() -> &'static str {
     LOGS_ROOT.get().map(|s| s.as_str()).unwrap_or(DEFAULT_LOGS_ROOT)
+}
+
+/// Get the configured templates root or the default
+fn get_templates_root() -> &'static str {
+    TEMPLATES_ROOT.get().map(|s| s.as_str()).unwrap_or(DEFAULT_TEMPLATES_ROOT)
 }
 
 // Get the workflow data root directory
@@ -132,7 +147,7 @@ pub fn credentials_path() -> PathBuf {
 }
 
 pub fn templates_dir() -> PathBuf {
-    app_root().join(TEMPLATES_DIR_NAME)
+    PathBuf::from(get_templates_root())
 }
 
 // Logs directory functions
@@ -205,7 +220,8 @@ mod tests {
     fn test_app_paths() {
         assert_eq!(config_dir().to_str().unwrap(), "/app/config");
         assert_eq!(credentials_path().to_str().unwrap(), "/app/config/credentials.json");
-        assert_eq!(templates_dir().to_str().unwrap(), "/app/templates");
+        // Templates dir now uses configurable path with default
+        assert_eq!(templates_dir().to_str().unwrap(), DEFAULT_TEMPLATES_ROOT);
     }
 
     #[test]
@@ -234,11 +250,10 @@ mod tests {
             );
         }
 
-        // Verify app paths start with app root
+        // Verify app paths start with app root (except templates which is now configurable)
         let app_paths = vec![
             config_dir(),
             credentials_path(),
-            templates_dir(),
         ];
 
         for path in app_paths {
@@ -248,6 +263,12 @@ mod tests {
                 path
             );
         }
+        
+        // Templates dir uses its own configurable root
+        assert!(
+            templates_dir().starts_with(get_templates_root()),
+            "Templates dir should start with templates root"
+        );
     }
 
     #[test]

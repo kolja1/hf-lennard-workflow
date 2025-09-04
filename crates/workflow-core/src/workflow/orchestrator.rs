@@ -154,8 +154,8 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
             }
         }
         
-        // Step 4: Generate letter - requires contact and profile, guaranteed letter
-        let letter = self.steps.generate_letter(&contact, &profile).await
+        // Step 4: Generate letter - requires contact, profile and dossier, guaranteed letter
+        let letter = self.steps.generate_letter(&contact, &profile, &dossier_result).await
             .map_err(|e| LennardError::Workflow(format!("Step 4 (generate letter) failed: {}", e)))?;
         
         log::info!("Step 4: Generated letter with subject '{}'", letter.subject);

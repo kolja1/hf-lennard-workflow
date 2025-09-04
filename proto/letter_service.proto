@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package letter_generation;
+
+// Python package will be generated as letter_service_pb2.py and letter_service_pb2_grpc.py
+// Rust package can be configured in build.rs
+
+// Service for generating business letters using AI
+service LetterGenerationService {
+  // Generate a standard letter
+  rpc GenerateLetter(GenerateLetterRequest) returns (GenerateLetterResponse);
+  
+  // Generate letter with approval history context
+  rpc GenerateLetterWithApproval(GenerateLetterWithApprovalRequest) returns (GenerateLetterResponse);
+  
+  // Health check endpoint
+  rpc GetHealth(HealthRequest) returns (HealthResponse);
+}
+
+// Request for standard letter generation
+message GenerateLetterRequest {
+  RecipientInfo recipient_info = 1;
+  CompanyInfo company_info = 2;
+  string our_company_info = 3;
+  repeated string feedback_history = 4;
+  string letter_type = 5; // e.g., "sales_introduction", "follow_up"
+  DossierContent dossier_content = 6;
+}
+
+// Request for approval-aware letter generation
+message GenerateLetterWithApprovalRequest {
+  ApprovalData approval_data = 1;
+  RecipientInfo recipient_info = 2;
+  CompanyInfo company_info = 3;
+  string our_company_info = 4;
+  string letter_type = 5;
+  DossierContent dossier_content = 6;
+}
+
+// Response containing generated letter
+message GenerateLetterResponse {
+  bool success = 1;
+  LetterContent letter = 2;
+  string error_message = 3;
+  GenerationMetadata metadata = 4;
+}
+
+// Recipient information
+message RecipientInfo {
+  string first_name = 1;
+  string last_name = 2;
+  string full_name = 3;
+  string email = 4;
+  string title = 5;
+  string account_name = 6; // Company name
+  string mailing_street = 7;
+  string mailing_city = 8;
+  string mailing_zip = 9;
+  string mailing_country = 10;
+}
+
+// Company information
+message CompanyInfo {
+  string account_name = 1;
+  string industry = 2;
+  string website = 3;
+}
+
+// Dossier content
+message DossierContent {
+  string person_dossier = 1;
+  string company_dossier = 2;
+}
+
+// Letter content structure
+message LetterContent {
+  string betreff = 1;      // Subject
+  string anrede = 2;        // Salutation
+  string brieftext = 3;     // Body
+  string grussformel = 4;   // Closing
+  string sender_name = 5;   // Sender name
+}
+
+// Approval data for iteration tracking
+message ApprovalData {
+  string approval_id = 1;
+  string state = 2; // "pending_approval", "needs_improvement", etc.
+  string created_at = 3;
+  string updated_at = 4;
+  
+  string letter_content = 5;
+  string contact_name = 6;
+  string company_name = 7;
+  
+  repeated LetterHistoryEntry letter_history = 8;
+  int32 current_iteration = 9;
+  
+  string zoho_task_id = 10;
+  string feedback_text = 11;
+  bool regeneration_requested = 12;
+}
+
+// Letter history entry
+message LetterHistoryEntry {
+  int32 iteration = 1;
+  string content = 2;
+  string timestamp = 3;
+  string generated_by = 4;
+  string feedback = 5;
+}
+
+// Generation metadata
+message GenerationMetadata {
+  int32 iterations_used = 1;
+  repeated ConversationTurn conversation_history = 2;
+}
+
+// Conversation turn
+message ConversationTurn {
+  string speaker = 1;
+  string message = 2;
+  string timestamp = 3;
+}
+
+// Health check request
+message HealthRequest {}
+
+// Health check response
+message HealthResponse {
+  bool healthy = 1;
+  string status = 2;
+  string version = 3;
+  string uptime = 4;
+  map<string, string> dependencies = 5;
+}

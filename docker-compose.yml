@@ -29,6 +29,7 @@ services:
     network_mode: host  # Use host network to access local services
     volumes:
       - ./config:/app/config:ro  # Configuration files
+      - ./templates:/app/templates:ro  # ODT template files
       - ./docker/volumes/workflow-data:/data  # Persistent workflow data (local bind mount)
       - ./docker/volumes/logs:/logs  # Logs directory for debugging
     environment:

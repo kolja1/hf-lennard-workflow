@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 BINARY_NAME="workflow-server"
 DATA_DIR="docker/volumes/workflow-data"
 LOGS_DIR="docker/volumes/logs"
+TEMPLATES_DIR="templates"
 CONFIG_FILE="config/credentials.json"
 GRPC_PORT="${GRPC_PORT:-50051}"
 BUILD_MODE="${BUILD_MODE:-release}"  # Can be 'debug' or 'release'
@@ -26,6 +27,7 @@ echo "  Binary: $BINARY_NAME"
 echo "  Build mode: $BUILD_MODE"
 echo "  Data directory: $DATA_DIR"
 echo "  Logs directory: $LOGS_DIR"
+echo "  Templates directory: $TEMPLATES_DIR"
 echo "  Config file: $CONFIG_FILE"
 echo "  gRPC port: $GRPC_PORT"
 echo ""
@@ -40,6 +42,13 @@ fi
 if [ ! -d "$LOGS_DIR" ]; then
     echo -e "${YELLOW}Creating logs directory: $LOGS_DIR${NC}"
     mkdir -p "$LOGS_DIR"
+fi
+
+# Check if templates directory exists
+if [ ! -d "$TEMPLATES_DIR" ]; then
+    echo -e "${RED}Error: Templates directory not found: $TEMPLATES_DIR${NC}"
+    echo "Please ensure your templates directory exists with ODT template files"
+    exit 1
 fi
 
 # Check if config file exists
@@ -80,4 +89,5 @@ exec "$BINARY_PATH" \
     --grpc-port "$GRPC_PORT" \
     --config "$CONFIG_FILE" \
     --data-dir "$DATA_DIR" \
-    --logs-dir "$LOGS_DIR"
+    --logs-dir "$LOGS_DIR" \
+    --templates-dir "$TEMPLATES_DIR"

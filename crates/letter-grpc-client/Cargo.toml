@@ -1,0 +1,12 @@
+[package]
+name = "letter-grpc-client"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }

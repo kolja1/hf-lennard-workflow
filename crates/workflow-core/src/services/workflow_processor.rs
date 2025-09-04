@@ -3,9 +3,9 @@
 use crate::error::{LennardError, Result};
 use crate::types::{ZohoContact, LinkedInProfile, MailingAddress};
 use crate::workflow::approval_types::LetterContent;
-use crate::clients::{ZohoClient, BaserowClient, DossierClient, LetterExpressClient, PDFService, TelegramClient};
+use crate::clients::{ZohoClient, BaserowClient, DossierClient, DossierResult, LetterExpressClient, LetterServiceClient, PDFService, TelegramClient};
 use crate::clients::zoho::Authenticated;  // Import the authenticated state
-use crate::services::{AddressExtractor, LetterGenerator};
+use crate::services::AddressExtractor;
 use crate::workflow::{WorkflowSteps, approval_types::ApprovalState, ApprovalQueue};
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ pub struct WorkflowProcessor {
     letterexpress_client: Arc<LetterExpressClient>,
     pdf_service: Arc<PDFService>,
     _address_extractor: Arc<AddressExtractor>,
-    letter_generator: Arc<LetterGenerator>,
+    letter_service: Arc<LetterServiceClient>,
     telegram_client: Arc<TelegramClient>,
     _approval_queue: Arc<ApprovalQueue>,
 }
@@ -36,7 +36,7 @@ impl WorkflowProcessor {
         letterexpress_client: Arc<LetterExpressClient>,
         pdf_service: Arc<PDFService>,
         address_extractor: Arc<AddressExtractor>,
-        letter_generator: Arc<LetterGenerator>,
+        letter_service: Arc<LetterServiceClient>,
         telegram_client: Arc<TelegramClient>,
         approval_queue: Arc<ApprovalQueue>,
     ) -> Self {
@@ -47,7 +47,7 @@ impl WorkflowProcessor {
             letterexpress_client,
             pdf_service,
             _address_extractor: address_extractor,
-            letter_generator,
+            letter_service,
             telegram_client,
             _approval_queue: approval_queue,
         }
@@ -112,7 +112,7 @@ impl WorkflowProcessor {
         }
         
         // Step 5: Generate letter content
-        let _letter = self.letter_generator.generate_letter(&contact, &profile, None).await?;
+        let _letter = self.letter_service.generate_letter(&contact, &profile, &dossier_result).await?;
         log::info!("Step 5: Generated letter content");
         
         // Step 6: Request approval via Telegram
@@ -202,9 +202,9 @@ impl WorkflowSteps for WorkflowProcessor {
         self.zoho_client.update_contact_address(contact_id, address).await
     }
     
-    async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile) -> Result<LetterContent> {
-        // Use the letter generator which returns the correct LetterContent type
-        self.letter_generator.generate_letter(contact, profile, None).await
+    async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile, dossier: &DossierResult) -> Result<LetterContent> {
+        // Use the letter service which returns the correct LetterContent type
+        self.letter_service.generate_letter(contact, profile, dossier).await
     }
     
     async fn request_approval(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<ApprovalState> {

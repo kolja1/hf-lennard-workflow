@@ -6,6 +6,7 @@ members = [
     "crates/workflow-server",
     "crates/zoho-generated-types",
     "crates/dossier-grpc-client",
+    "crates/letter-grpc-client",
 ]
 resolver = "2"
 

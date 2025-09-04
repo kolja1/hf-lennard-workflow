@@ -22,6 +22,9 @@ struct RawConfig {
     
     #[serde(default = "default_dossier")]
     pub dossier: DossierConfig,
+    
+    #[serde(default)]
+    pub letter_service: Option<LetterServiceConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +47,7 @@ pub struct LennardConfig {
     pub telegram: TelegramConfig,
     pub pdf_service: PDFServiceConfig,
     pub dossier: DossierConfig,
+    pub letter_service: LetterServiceConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +119,15 @@ pub struct DossierConfig {
     pub grpc_port: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LetterServiceConfig {
+    #[serde(default = "default_letter_service_grpc_host")]
+    pub grpc_host: String,
+    
+    #[serde(default = "default_letter_service_grpc_port")]
+    pub grpc_port: u16,
+}
+
 // Default functions
 fn default_pdf_service() -> PDFServiceConfig {
     PDFServiceConfig {
@@ -135,6 +148,21 @@ fn default_dossier_grpc_host() -> String {
 
 fn default_dossier_grpc_port() -> u16 {
     50052
+}
+
+fn default_letter_service() -> LetterServiceConfig {
+    LetterServiceConfig {
+        grpc_host: default_letter_service_grpc_host(),
+        grpc_port: default_letter_service_grpc_port(),
+    }
+}
+
+fn default_letter_service_grpc_host() -> String {
+    "localhost".to_string()
+}
+
+fn default_letter_service_grpc_port() -> u16 {
+    50053
 }
 
 fn default_zoho_base_url() -> String {
@@ -180,6 +208,7 @@ impl LennardConfig {
             telegram: raw.telegram,
             pdf_service: raw.pdf_service,
             dossier: raw.dossier,
+            letter_service: raw.letter_service.unwrap_or_else(default_letter_service),
         }
     }
     
