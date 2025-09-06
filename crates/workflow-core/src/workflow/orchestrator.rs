@@ -262,7 +262,29 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
             
         log::info!("Step 6: Letter sent successfully after approval, tracking: {}", tracking_id);
         
-        // TODO: Update task status in Zoho to mark as completed
+        // Update task status in Zoho to mark as completed and attach the letter
+        let task_id = approval_data.task_id.to_string();
+        let success_message = format!("Brief erfolgreich versendet. Tracking: {}", tracking_id);
+        
+        // First, attach the PDF to the task
+        let pdf_data = general_purpose::STANDARD.decode(pdf_base64)
+            .map_err(|e| LennardError::Workflow(format!("Failed to decode PDF for attachment: {}", e)))?;
+        
+        let pdf_filename = format!("Brief_{}.pdf", approval_data.contact_id);
+        if let Err(e) = self.steps.attach_file_to_task(&task_id, pdf_data, &pdf_filename).await {
+            log::error!("Failed to attach PDF to Zoho task: {}", e);
+            // Don't fail the whole workflow if attachment fails
+        } else {
+            log::info!("Attached PDF letter to Zoho task {}", task_id);
+        }
+        
+        // Then update the status to completed
+        if let Err(e) = self.steps.update_task_completed_status(&task_id, &success_message).await {
+            log::error!("Failed to update Zoho task status to completed: {}", e);
+            // Don't fail the whole workflow if status update fails
+        } else {
+            log::info!("Updated Zoho task {} status to 'Abgeschlossen'", task_id);
+        }
         
         Ok(format!("Letter sent successfully after approval, tracking: {}", tracking_id))
     }

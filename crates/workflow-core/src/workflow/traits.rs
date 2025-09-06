@@ -60,4 +60,19 @@ pub trait WorkflowSteps: Send + Sync {
         task_id: &str,
         error_message: &str
     ) -> Result<()>;
+    
+    /// Update Zoho task status to completed
+    async fn update_task_completed_status(
+        &self,
+        task_id: &str,
+        success_message: &str
+    ) -> Result<()>;
+    
+    /// Attach file to Zoho task
+    async fn attach_file_to_task(
+        &self,
+        task_id: &str,
+        file_data: Vec<u8>,
+        filename: &str
+    ) -> Result<()>;
 }

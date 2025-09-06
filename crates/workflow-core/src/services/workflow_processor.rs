@@ -434,6 +434,29 @@ impl WorkflowSteps for WorkflowProcessor {
             .update_task_status(task_id, "Warten auf Andere", &error_description)
             .await
     }
+    
+    async fn update_task_completed_status(
+        &self,
+        task_id: &str,
+        success_message: &str
+    ) -> Result<()> {
+        // Update Zoho task status to "Abgeschlossen" (Completed)
+        self.zoho_client
+            .update_task_status(task_id, "Abgeschlossen", success_message)
+            .await
+    }
+    
+    async fn attach_file_to_task(
+        &self,
+        task_id: &str,
+        file_data: Vec<u8>,
+        filename: &str
+    ) -> Result<()> {
+        // Attach file to Zoho task
+        self.zoho_client
+            .attach_file_to_task(task_id, file_data, filename)
+            .await
+    }
 }
 
 #[cfg(test)]

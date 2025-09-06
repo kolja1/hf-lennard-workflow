@@ -287,6 +287,61 @@ impl ZohoClient<Authenticated> {
         Ok(())
     }
     
+    /// Attach a file to a Zoho task
+    /// API Documentation: https://www.zoho.com/crm/developer/docs/api/v2/upload-attachment.html
+    pub async fn attach_file_to_task(&self, task_id: &str, file_data: Vec<u8>, filename: &str) -> Result<()> {
+        let url = format!("{}/crm/v2/Tasks/{}/Attachments", self.base_url, task_id);
+        
+        // Get fresh token from Nango
+        let access_token = self.get_fresh_token().await?;
+        
+        // Create multipart form with file field (required by Zoho API)
+        let part = reqwest::multipart::Part::bytes(file_data)
+            .file_name(filename.to_string())
+            .mime_str("application/pdf")?;
+            
+        let form = reqwest::multipart::Form::new()
+            .part("file", part);  // Field name must be "file" as per Zoho API docs
+        
+        let response = self.http_client
+            .post(&url)
+            .bearer_auth(access_token)
+            .multipart(form)
+            .send()
+            .await?;
+            
+        let status = response.status();
+        
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(LennardError::ServiceUnavailable(
+                format!("Failed to attach file to Zoho task (status {}): {}", status, error_text)
+            ));
+        }
+        
+        // Parse response to verify success
+        let response_text = response.text().await?;
+        let response_json: serde_json::Value = serde_json::from_str(&response_text)
+            .map_err(|e| LennardError::Json(e))?;
+            
+        // Check if the response indicates success
+        if let Some(data) = response_json.get("data").and_then(|d| d.as_array()) {
+            if let Some(first) = data.first() {
+                if let Some(code) = first.get("code").and_then(|c| c.as_str()) {
+                    if code == "SUCCESS" {
+                        log::info!("Successfully attached file '{}' to Zoho task {}", filename, task_id);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        
+        // If we didn't get a success response, return error
+        Err(LennardError::ServiceUnavailable(
+            format!("Unexpected response from Zoho when attaching file: {}", response_text)
+        ))
+    }
+    
     /// Get tasks with filters using Search API (only available for authenticated clients)
     pub async fn get_tasks(&self, filters: &[(&str, &str)]) -> Result<Vec<TasksResponse>> {
         // Use Search API which properly respects Owner filter

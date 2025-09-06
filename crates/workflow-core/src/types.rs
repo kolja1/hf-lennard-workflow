@@ -89,10 +89,13 @@ pub struct PDFTemplateData {
     #[serde(rename = "Sender-Name")]
     pub sender_name: String,
     
-    #[serde(rename = "Reciepient")]
+    #[serde(rename = "Company")]  // NEW field for company name
+    pub company: String,
+    
+    #[serde(rename = "Recipient")]  // Fixed spelling to match bookmark
     pub recipient: String,
     
-    #[serde(rename = "Street-1")]
+    #[serde(rename = "Street 1")]  // Changed to match bookmark with space
     pub street_1: String,
     
     #[serde(rename = "Street-2")]
@@ -101,7 +104,7 @@ pub struct PDFTemplateData {
     #[serde(rename = "City")]
     pub city: String,
     
-    #[serde(rename = "PLZ")]
+    #[serde(rename = "ZipCode")]  // Changed from PLZ to match bookmark
     pub plz: String,
     
     #[serde(rename = "Country")]
@@ -116,6 +119,7 @@ impl PDFTemplateData {
             anrede: letter.greeting.clone(),
             brieftext: letter.body.clone(),
             sender_name: letter.sender_name.clone(),
+            company: letter.company_name.clone(),  // Add company name from letter
             recipient: letter.recipient_name.clone(),
             street_1: address.street.clone(),
             street_2: address.state.clone(),
@@ -223,6 +227,7 @@ mod tests {
             anrede: "Greeting".to_string(),
             brieftext: "Body".to_string(),
             sender_name: "Sender".to_string(),
+            company: "Company".to_string(),
             recipient: "Recipient".to_string(),
             street_1: "Street".to_string(),
             street_2: None,
@@ -239,10 +244,11 @@ mod tests {
         assert!(json.contains("\"Anrede\":\"Greeting\""));
         assert!(json.contains("\"Brieftext\":\"Body\""));
         assert!(json.contains("\"Sender-Name\":\"Sender\""));
-        assert!(json.contains("\"Reciepient\":\"Recipient\"")); // Note: typo preserved
-        assert!(json.contains("\"Street-1\":\"Street\""));
+        assert!(json.contains("\"Company\":\"Company\""));
+        assert!(json.contains("\"Recipient\":\"Recipient\"")); // Fixed spelling
+        assert!(json.contains("\"Street 1\":\"Street\""));     // With space
         assert!(json.contains("\"City\":\"City\""));
-        assert!(json.contains("\"PLZ\":\"PLZ\""));
+        assert!(json.contains("\"ZipCode\":\"PLZ\""));         // Changed to ZipCode
         assert!(json.contains("\"Country\":\"Country\""));
         
         // Street-2 should be null when None
