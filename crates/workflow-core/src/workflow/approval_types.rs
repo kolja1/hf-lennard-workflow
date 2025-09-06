@@ -9,6 +9,12 @@ use chrono::{DateTime, Utc};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ApprovalId(String);
 
+impl Default for ApprovalId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ApprovalId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
@@ -32,9 +38,21 @@ impl fmt::Display for ApprovalId {
     }
 }
 
+impl From<String> for ApprovalId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /// Strongly typed WorkflowId
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkflowId(String);
+
+impl Default for WorkflowId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl WorkflowId {
     pub fn new() -> Self {
@@ -72,6 +90,12 @@ impl TaskId {
     }
 }
 
+impl std::fmt::Display for TaskId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Strongly typed ContactId from Zoho
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactId(String);
@@ -83,6 +107,12 @@ impl ContactId {
     
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::fmt::Display for ContactId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -188,6 +218,11 @@ pub struct ApprovalData {
     pub telegram_message_id: Option<TelegramMessageId>,
     pub telegram_chat_id: Option<TelegramChatId>,
     pub updated_at: DateTime<Utc>,
+    /// Mailing address for the recipient (needed for PDF generation)
+    pub mailing_address: Option<crate::types::MailingAddress>,
+    /// Base64-encoded PDF data (generated before approval request)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdf_base64: Option<String>,
 }
 
 impl ApprovalData {
@@ -226,6 +261,8 @@ impl ApprovalData {
             telegram_message_id: None,
             telegram_chat_id: None,
             updated_at: now,
+            mailing_address: None,
+            pdf_base64: None,
         }
     }
     
@@ -302,6 +339,12 @@ pub enum HealthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateCountMap {
     counts: std::collections::HashMap<ApprovalState, usize>,
+}
+
+impl Default for StateCountMap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StateCountMap {

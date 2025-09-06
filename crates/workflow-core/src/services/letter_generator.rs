@@ -94,7 +94,7 @@ impl LetterGenerator {
         
         Ok(LetterContent {
             subject: "Geschäftliche Anfrage".to_string(), // Default subject
-            greeting: format!("Sehr geehrte Damen und Herren,"),
+            greeting: "Sehr geehrte Damen und Herren,".to_string(),
             body: content.to_string(),
             sender_name: "Ihr Lennard Team".to_string(),
             recipient_name: contact.full_name.clone(),

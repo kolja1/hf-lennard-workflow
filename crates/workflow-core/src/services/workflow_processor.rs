@@ -2,8 +2,8 @@
 
 use crate::error::{LennardError, Result};
 use crate::types::{ZohoContact, LinkedInProfile, MailingAddress};
-use crate::workflow::approval_types::LetterContent;
-use crate::clients::{ZohoClient, BaserowClient, DossierClient, DossierResult, LetterExpressClient, LetterServiceClient, PDFService, TelegramClient};
+use crate::workflow::approval_types::{LetterContent, ApprovalId};
+use crate::clients::{ZohoClient, BaserowClient, DossierClient, DossierResult, LetterExpressClient, LetterServiceClient, PDFService, TelegramClientTrait};
 use crate::clients::zoho::Authenticated;  // Import the authenticated state
 use crate::services::AddressExtractor;
 use crate::workflow::{WorkflowSteps, approval_types::ApprovalState, ApprovalQueue};
@@ -24,8 +24,8 @@ pub struct WorkflowProcessor {
     pdf_service: Arc<PDFService>,
     _address_extractor: Arc<AddressExtractor>,
     letter_service: Arc<LetterServiceClient>,
-    telegram_client: Arc<TelegramClient>,
-    _approval_queue: Arc<ApprovalQueue>,
+    telegram_client: Arc<dyn TelegramClientTrait>,
+    approval_queue: Arc<ApprovalQueue>,
 }
 
 impl WorkflowProcessor {
@@ -37,7 +37,7 @@ impl WorkflowProcessor {
         pdf_service: Arc<PDFService>,
         address_extractor: Arc<AddressExtractor>,
         letter_service: Arc<LetterServiceClient>,
-        telegram_client: Arc<TelegramClient>,
+        telegram_client: Arc<dyn TelegramClientTrait>,
         approval_queue: Arc<ApprovalQueue>,
     ) -> Self {
         Self {
@@ -49,7 +49,7 @@ impl WorkflowProcessor {
             _address_extractor: address_extractor,
             letter_service,
             telegram_client,
-            _approval_queue: approval_queue,
+            approval_queue,
         }
     }
     
@@ -207,24 +207,22 @@ impl WorkflowSteps for WorkflowProcessor {
         self.letter_service.generate_letter(contact, profile, dossier).await
     }
     
-    async fn request_approval(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<ApprovalState> {
+    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, letter: &LetterContent) -> Result<ApprovalId> {
+        use crate::workflow::approval_types::{TaskId, ContactId, UserId};
         use crate::types::PDFTemplateData;
+        use base64::{Engine as _, engine::general_purpose};
         
-        // Generate a unique approval ID
-        let approval_id = uuid::Uuid::new_v4().to_string();
+        log::info!("Starting approval for task {} and contact {}", task_id, contact.full_name);
         
-        log::info!("Creating approval request {} for letter to {}", approval_id, contact.full_name);
-        
-        // Get mailing address from contact
+        // Get mailing address - REQUIRED for later PDF sending
         let mailing_address = contact.mailing_address.as_ref()
             .ok_or_else(|| LennardError::Workflow(
                 format!("Contact {} has no mailing address", contact.full_name)
             ))?;
         
-        // Create strongly typed PDF data
+        // Generate PDF now so it's included in the approval
+        log::info!("Generating PDF for approval");
         let pdf_template_data = PDFTemplateData::from_letter_and_address(letter, mailing_address);
-        
-        log::info!("Generating PDF for approval request {}", approval_id);
         let pdf_data = self.pdf_service.generate_pdf_typed("letter_template.odt", &pdf_template_data).await
             .map_err(|e| {
                 log::error!("Failed to generate PDF for approval: {}", e);
@@ -233,20 +231,75 @@ impl WorkflowSteps for WorkflowProcessor {
         
         log::info!("PDF generated successfully, {} bytes", pdf_data.len());
         
+        // Create the required types
+        let task_id = TaskId::new(task_id.to_string());
+        let contact_id = ContactId::new(contact.id.clone());
+        let user_id = UserId::new(1); // TODO: Get actual user ID from context
+        
+        // Extract company name from contact
+        let company_name = contact.company.clone().unwrap_or_else(|| "Unknown Company".to_string());
+        
+        // Create and persist the approval request with all necessary data
+        let approval_id = self.approval_queue.create_approval(
+            task_id,
+            contact_id,
+            contact.full_name.clone(),
+            company_name,
+            letter.clone(),
+            user_id,
+            Some(mailing_address.clone()),
+            Some(general_purpose::STANDARD.encode(&pdf_data)),
+        )?;
+        
+        log::info!("Created approval with ID: {} (includes mailing address and PDF)", approval_id);
+        Ok(approval_id)
+    }
+    
+    async fn request_approval(&self, approval_id: &ApprovalId, letter: &LetterContent, contact: &ZohoContact) -> Result<ApprovalState> {
+        use base64::{Engine as _, engine::general_purpose};
+        
+        // Use the existing approval ID that was already persisted
+        let approval_id_str = approval_id.to_string();
+        
+        log::info!("Sending approval request {} for letter to {}", approval_id_str, contact.full_name);
+        
+        // Get the approval to retrieve the PDF that was already generated
+        let approval_data = self.approval_queue.get_approval_request(approval_id, None)?
+            .ok_or_else(|| LennardError::Workflow(
+                format!("Approval {} not found", approval_id_str)
+            ))?;
+        
+        // Decode the PDF from base64
+        let pdf_data = approval_data.pdf_base64
+            .ok_or_else(|| LennardError::Workflow("Approval has no PDF data".to_string()))
+            .and_then(|base64| {
+                general_purpose::STANDARD.decode(&base64)
+                    .map_err(|e| LennardError::Workflow(format!("Failed to decode PDF: {}", e)))
+            })?;
+        
+        log::info!("Retrieved PDF from approval, {} bytes", pdf_data.len());
+        
         // Send approval request to Telegram with PDF
         self.telegram_client
-            .send_approval_request_with_pdf(letter, contact, &approval_id, pdf_data)
+            .send_approval_request_with_pdf(letter, contact, &approval_id_str, pdf_data)
             .await?;
         
-        log::info!("Telegram approval message with PDF sent for approval_id: {}", approval_id);
+        log::info!("Telegram approval message with PDF sent for approval_id: {}", approval_id_str);
         
-        // Return pending approval state
-        // The Python bot will handle the callback and update the approval state
-        Ok(ApprovalState::PendingApproval)
+        // Transition the approval to AwaitingUserResponse state now that it's been sent to Telegram
+        // This is critical for the gRPC handler to find the approval when the user responds
+        self.approval_queue.mark_as_awaiting_response(approval_id)?;
+        
+        log::info!("Transitioned approval {} to AwaitingUserResponse state", approval_id_str);
+        
+        // Return the updated state
+        Ok(ApprovalState::AwaitingUserResponse)
     }
     
     async fn send_pdf(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<String> {
         use crate::types::{LetterExpressRequest, MailingAddress, PrintColor, PrintMode, ShippingType, PDFTemplateData};
+        use crate::paths::{pdfs_dir, letterexpress_logs_dir};
+        use std::fs;
         
         // Get mailing address from contact - REQUIRED
         let recipient_address = contact.mailing_address.as_ref()
@@ -259,6 +312,24 @@ impl WorkflowSteps for WorkflowProcessor {
         
         // Generate PDF using template with strongly typed data
         let pdf_data = self.pdf_service.generate_pdf_typed("letter_template.odt", &pdf_template_data).await?;
+        
+        // Save PDF locally first (for backup and debugging)
+        let pdf_dir = pdfs_dir();
+        fs::create_dir_all(&pdf_dir).ok();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let pdf_filename = format!("letter_{}_{}.pdf", 
+            contact.id.replace(":", "_"),
+            timestamp
+        );
+        let pdf_path = pdf_dir.join(&pdf_filename);
+        if let Err(e) = fs::write(&pdf_path, &pdf_data) {
+            log::warn!("Failed to save PDF locally: {}", e);
+        } else {
+            log::info!("PDF saved locally at: {:?}", pdf_path);
+        }
         
         // Create sender address (placeholder)
         let sender_address = MailingAddress {
@@ -279,8 +350,65 @@ impl WorkflowSteps for WorkflowProcessor {
             shipping: ShippingType::Standard,
         };
         
-        // Send via LetterExpress
-        self.letterexpress_client.send_letter(&request).await
+        // Try to send via LetterExpress with detailed error handling
+        log::info!("Attempting to send letter via LetterExpress for contact: {} ({})", 
+            contact.full_name, contact.id);
+        
+        match self.letterexpress_client.send_letter(&request).await {
+            Ok(tracking_id) => {
+                log::info!("Successfully sent letter via LetterExpress. Tracking ID: {}", tracking_id);
+                Ok(tracking_id)
+            },
+            Err(e) => {
+                // Log detailed error
+                log::error!("LetterExpress API failed for contact {} ({}): {}", 
+                    contact.full_name, contact.id, e);
+                
+                // Log to error file
+                let error_log_dir = letterexpress_logs_dir();
+                fs::create_dir_all(&error_log_dir).ok();
+                let error_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let error_log_file = error_log_dir.join(format!("error_{}_{}.log",
+                    contact.id.replace(":", "_"),
+                    error_timestamp
+                ));
+                let error_details = format!(
+                    "LetterExpress Error Log\n\
+                    ========================\n\
+                    Timestamp: {}\n\
+                    Contact: {} (ID: {})\n\
+                    Company: {}\n\
+                    Recipient Address:\n  {}\n  {}, {} {}\n  {}\n\
+                    Error: {}\n\
+                    PDF saved at: {:?}\n",
+                    error_timestamp,
+                    contact.full_name,
+                    contact.id,
+                    contact.company.as_deref().unwrap_or("Unknown"),
+                    recipient_address.street,
+                    recipient_address.city,
+                    recipient_address.state.as_deref().unwrap_or(""),
+                    recipient_address.postal_code,
+                    recipient_address.country,
+                    e,
+                    pdf_path
+                );
+                fs::write(&error_log_file, &error_details).ok();
+                log::info!("LetterExpress error details saved to: {:?}", error_log_file);
+                
+                // Note: LetterExpress error details are logged to file and will be included in the
+                // main error message that gets sent to Telegram through the normal error flow
+                
+                // Return error with helpful context
+                Err(LennardError::ServiceUnavailable(format!(
+                    "LetterExpress service failed: {}. PDF was generated and saved locally at {}. Please check the LetterExpress credentials or send manually.",
+                    e, pdf_filename
+                )))
+            }
+        }
     }
     
     async fn send_error_notification(
@@ -366,4 +494,5 @@ mod tests {
         assert!(!TASK_SUBJECT_FILTER.contains("Linkedin"), 
             "Subject must NOT contain 'Linkedin' with lowercase i");
     }
+    
 }

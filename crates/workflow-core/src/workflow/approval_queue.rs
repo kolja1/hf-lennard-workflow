@@ -58,6 +58,8 @@ impl ApprovalQueue {
     
     /// Find approval in any state
     fn find_approval_path(&self, approval_id: &ApprovalId) -> Option<(PathBuf, ApprovalState)> {
+        log::debug!("Searching for approval {} in all state directories", approval_id);
+        
         for state in &[
             ApprovalState::PendingApproval,
             ApprovalState::AwaitingUserResponse,
@@ -66,10 +68,15 @@ impl ApprovalQueue {
             ApprovalState::Failed,
         ] {
             let path = self.get_approval_path(*state, approval_id);
+            log::debug!("Checking path: {:?} - exists: {}", path, path.exists());
+            
             if path.exists() {
+                log::debug!("Found approval {} in state {:?}", approval_id, state);
                 return Some((path, *state));
             }
         }
+        
+        log::debug!("Approval {} not found in any state directory", approval_id);
         None
     }
     
@@ -106,8 +113,10 @@ impl ApprovalQueue {
         company_name: String,
         letter: LetterContent,
         requested_by: UserId,
+        mailing_address: Option<crate::types::MailingAddress>,
+        pdf_base64: Option<String>,
     ) -> Result<ApprovalId> {
-        let approval = ApprovalData::new(
+        let mut approval = ApprovalData::new(
             task_id,
             contact_id,
             recipient_name,
@@ -115,6 +124,10 @@ impl ApprovalQueue {
             letter,
             requested_by,
         );
+        
+        // Add the additional fields
+        approval.mailing_address = mailing_address;
+        approval.pdf_base64 = pdf_base64;
         
         let approval_id = approval.approval_id.clone();
         let path = self.get_approval_path(ApprovalState::PendingApproval, &approval_id);
@@ -206,10 +219,45 @@ impl ApprovalQueue {
         Ok(false)
     }
     
+    /// Mark approval as awaiting user response (after sending to Telegram)
+    pub fn mark_as_awaiting_response(&self, approval_id: &ApprovalId) -> Result<()> {
+        if let Some((path, current_state)) = self.find_approval_path(approval_id) {
+            if current_state != ApprovalState::PendingApproval {
+                return Err(LennardError::Workflow(
+                    format!("Cannot transition approval {} from {:?} to AwaitingUserResponse", 
+                        approval_id, current_state)
+                ));
+            }
+            
+            let mut approval = self.read_approval(&path)?;
+            approval.state = ApprovalState::AwaitingUserResponse;
+            approval.updated_at = Utc::now();
+            
+            // Write updated approval
+            self.write_approval(&path, &approval)?;
+            
+            // Move to awaiting_response directory
+            let new_path = self.get_approval_path(ApprovalState::AwaitingUserResponse, approval_id);
+            self.move_approval(&path, &new_path)?;
+            
+            log::info!("Transitioned approval {} to AwaitingUserResponse", approval_id);
+            Ok(())
+        } else {
+            Err(LennardError::Workflow(
+                format!("Approval {} not found", approval_id)
+            ))
+        }
+    }
+    
     /// Handle user approval
     pub fn handle_user_approval(&self, approval_id: &ApprovalId) -> Result<Option<ApprovalData>> {
+        log::info!("handle_user_approval called for approval_id: {}", approval_id);
+        
         if let Some((path, current_state)) = self.find_approval_path(approval_id) {
+            log::info!("Found approval at {:?} with state {:?}", path, current_state);
+            
             if current_state != ApprovalState::AwaitingUserResponse {
+                log::warn!("Approval {} is in state {:?}, not AwaitingUserResponse", approval_id, current_state);
                 return Ok(None);
             }
             
@@ -227,6 +275,7 @@ impl ApprovalQueue {
             return Ok(Some(approval));
         }
         
+        log::warn!("Approval {} not found in any state directory", approval_id);
         Ok(None)
     }
     
@@ -704,5 +753,71 @@ mod tests {
         assert!(parsed.processed);
         assert!(parsed.processed_at.is_some());
         assert_eq!(parsed.result.as_ref().unwrap(), "Test processing completed");
+    }
+    
+    #[test]
+    fn test_approval_persists_to_disk_across_restart() {
+        use tempfile::TempDir;
+        
+        // Create a temporary directory for the test
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_path_buf();
+        
+        // Store approval ID for later verification
+        let approval_id;
+        
+        // First instance - create and save approval
+        {
+            let approval_queue = ApprovalQueue::new(&temp_path).unwrap();
+            
+            // Create test data
+            let task_id = TaskId::new("test-task-123".to_string());
+            let contact_id = ContactId::new("test-contact-456".to_string());
+            let user_id = UserId::new(789);
+            
+            let letter = LetterContent {
+                subject: "Test Subject".to_string(),
+                greeting: "Dear Test".to_string(),
+                body: "Test body".to_string(),
+                sender_name: "Test Sender".to_string(),
+                recipient_name: "Test Person".to_string(),
+                company_name: "Test Company".to_string(),
+            };
+            
+            // Create and persist approval
+            approval_id = approval_queue.create_approval(
+                task_id,
+                contact_id,
+                "Test Person".to_string(),
+                "Test Company".to_string(),
+                letter,
+                user_id,
+            ).unwrap();
+            
+            // Verify it exists in first instance
+            let pending = approval_queue.get_pending_approvals().unwrap();
+            assert_eq!(pending.len(), 1, "Should have one approval in first instance");
+            
+            // First instance is dropped here, simulating shutdown
+        }
+        
+        // Second instance - should be able to load persisted approval
+        {
+            let approval_queue_2 = ApprovalQueue::new(&temp_path).unwrap();
+            
+            // Check that approval was persisted and can be loaded
+            let pending_approvals = approval_queue_2.get_pending_approvals().unwrap();
+            
+            // This will pass if approvals are properly persisted to disk
+            assert_eq!(pending_approvals.len(), 1, 
+                "Approval should persist to disk and be loadable after restart");
+            assert_eq!(pending_approvals[0].recipient_name, "Test Person");
+            
+            // Verify we can retrieve it by ID in the new instance
+            let retrieved = approval_queue_2.get_approval_request(&approval_id, None).unwrap();
+            assert!(retrieved.is_some(), 
+                "Should be able to retrieve approval by ID after restart");
+            assert_eq!(retrieved.unwrap().recipient_name, "Test Person");
+        }
     }
 }

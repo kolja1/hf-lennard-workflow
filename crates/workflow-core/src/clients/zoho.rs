@@ -170,7 +170,7 @@ impl ZohoClient<Authenticated> {
             .await?;
             
         if !response.status().is_success() {
-            return Err(LennardError::Http(reqwest::Error::from(response.error_for_status().unwrap_err())));
+            return Err(LennardError::Http(response.error_for_status().unwrap_err()));
         }
         
         let data: Value = response.json().await?;
@@ -239,7 +239,7 @@ impl ZohoClient<Authenticated> {
         }
             
         if !response.status().is_success() {
-            return Err(LennardError::Http(reqwest::Error::from(response.error_for_status().unwrap_err())));
+            return Err(LennardError::Http(response.error_for_status().unwrap_err()));
         }
         
         // Single record response has the data wrapped differently
@@ -382,7 +382,7 @@ impl ZohoClient<Authenticated> {
             .await?;
             
         if !response.status().is_success() {
-            return Err(LennardError::Http(reqwest::Error::from(response.error_for_status().unwrap_err())));
+            return Err(LennardError::Http(response.error_for_status().unwrap_err()));
         }
         
         Ok(())

@@ -7,6 +7,7 @@ use reqwest::Client as HttpClient;
 use serde_json;
 use base64::{Engine as _, engine::general_purpose};
 use log::{debug, info, warn, error};
+use md5;
 
 pub struct LetterExpressClient {
     config: LetterExpressConfig,
@@ -28,11 +29,14 @@ impl LetterExpressClient {
     
     /// Send letter via LetterExpress
     pub async fn send_letter(&self, request: &LetterExpressRequest) -> Result<String> {
-        let url = format!("{}/setJob", self.config.base_url);
+        let url = format!("{}/printjobs", self.config.base_url);
         
         // LetterExpress API v3 requires JSON body with auth
-        // Note: For actual implementation, PDF needs to be base64 encoded
+        // Encode PDF to base64
         let pdf_base64 = general_purpose::STANDARD.encode(&request.pdf_data);
+        
+        // Calculate MD5 checksum of the base64 string (required by API)
+        let checksum = format!("{:x}", md5::compute(&pdf_base64));
         
         let request_body = serde_json::json!({
             "auth": {
@@ -42,11 +46,11 @@ impl LetterExpressClient {
             },
             "letter": {
                 "base64_file": pdf_base64,
-                "base64_checksum": "",  // Optional MD5 checksum
+                "base64_file_checksum": checksum,  // MD5 checksum of base64 string
                 "specification": {
-                    "color": if request.color == crate::types::PrintColor::Color { 1 } else { 0 },
+                    "color": if request.color == crate::types::PrintColor::Color { "4" } else { "1" },  // "1" for b/w, "4" for color
                     "mode": if request.mode == crate::types::PrintMode::Duplex { "duplex" } else { "simplex" },
-                    "ship": if request.shipping == crate::types::ShippingType::Standard { "national" } else { "international" }
+                    "shipping": if request.shipping == crate::types::ShippingType::Standard { "national" } else { "international" }  // Fixed field name
                 }
             }
         });
@@ -77,7 +81,7 @@ impl LetterExpressClient {
     
     /// Test connection to LetterExpress service
     pub async fn test_connection(&self) -> Result<bool> {
-        // Use /v3/balance endpoint with JSON body auth
+        // Use /balance endpoint (v3 is already in base_url)
         let url = format!("{}/balance", self.config.base_url);
         
         // LetterExpress requires auth in JSON body, not headers
@@ -93,7 +97,7 @@ impl LetterExpressClient {
         debug!("Using auth mode: {}", self.config.mode);
         
         let response = self.http_client
-            .get(&url)  // GET request with JSON body
+            .post(&url)  // POST request with JSON body (GET with body is not standard)
             .header("Content-Type", "application/json")
             .json(&auth_body)
             .send()

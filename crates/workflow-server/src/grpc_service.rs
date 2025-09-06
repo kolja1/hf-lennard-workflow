@@ -34,15 +34,19 @@ pub struct GrpcServiceWrapper {
     orchestrator: Arc<WorkflowOrchestrator<WorkflowProcessor>>,
     // Store workflow states in memory (in production, use a database)
     workflow_states: Arc<RwLock<HashMap<String, ProtoWorkflowState>>>,
-    approval_states: Arc<RwLock<HashMap<String, ProtoApprovalState>>>,
+    // Approval states are now managed by ApprovalQueue (disk-based storage)
+    approval_queue: Arc<workflow_core::workflow::ApprovalQueue>,
 }
 
 impl GrpcServiceWrapper {
-    pub fn new(orchestrator: Arc<WorkflowOrchestrator<WorkflowProcessor>>) -> Self {
+    pub fn new(
+        orchestrator: Arc<WorkflowOrchestrator<WorkflowProcessor>>,
+        approval_queue: Arc<workflow_core::workflow::ApprovalQueue>,
+    ) -> Self {
         Self {
             orchestrator,
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
-            approval_states: Arc::new(RwLock::new(HashMap::new())),
+            approval_queue,
         }
     }
 }
@@ -106,6 +110,8 @@ impl WorkflowService for GrpcServiceWrapper {
         request: Request<GetWorkflowStateRequest>,
     ) -> Result<Response<ProtoWorkflowState>, Status> {
         let workflow_id = request.into_inner().workflow_id;
+        
+        log::info!("=== GET WORKFLOW STATE CALLED for ID: {} ===", workflow_id);
         
         let states = self.workflow_states.read().await;
         states.get(&workflow_id)
@@ -212,30 +218,86 @@ impl ApprovalService for GrpcServiceWrapper {
         let approval = request.into_inner();
         let approval_id = approval.approval_id.clone();
         
-        // Create or update approval state
-        let mut states = self.approval_states.write().await;
-        let state = states.entry(approval_id.clone()).or_insert_with(|| {
-            ProtoApprovalState {
-                approval_id: approval_id.clone(),
-                status: workflow_grpc::approval_state::Status::Pending as i32,
-                iterations: vec![],
-                final_pdf: None,
-                final_pdf_filename: None,
-            }
-        });
+        log::info!("=== SUBMIT APPROVAL CALLED ===");
+        log::info!("Received approval response for ID: {} with decision: {:?}", 
+            approval_id, approval.decision());
         
-        // Update based on decision
-        state.status = match approval.decision() {
-            workflow_grpc::approval_response::Decision::Approved => 
-                workflow_grpc::approval_state::Status::Approved as i32,
-            workflow_grpc::approval_response::Decision::Rejected => 
-                workflow_grpc::approval_state::Status::Rejected as i32,
-            workflow_grpc::approval_response::Decision::NeedsRevision => 
-                workflow_grpc::approval_state::Status::InRevision as i32,
-            _ => workflow_grpc::approval_state::Status::Pending as i32,
+        // Process the approval through the approval queue
+        let result = match approval.decision() {
+            workflow_grpc::approval_response::Decision::Approved => {
+                // Convert string ID to ApprovalId type
+                let approval_id_typed = workflow_core::workflow::approval_types::ApprovalId::from(approval_id.clone());
+                
+                // Process approval through the queue - this will move the file to approved directory
+                // The ApprovalWatcher will then pick it up and process it
+                match self.approval_queue.handle_user_approval(&approval_id_typed) {
+                    Ok(Some(approval_data)) => {
+                        log::info!("Successfully moved approval {} to approved directory for task: {:?}", 
+                            approval_id, approval_data.task_id);
+                        log::info!("ApprovalWatcher will process this approval shortly");
+                        
+                        // Note: We do NOT trigger continue_after_approval here!
+                        // The ApprovalWatcher will handle it when it detects the file in the approved directory
+                        
+                        ProtoApprovalState {
+                            approval_id: approval_id.clone(),
+                            status: workflow_grpc::approval_state::Status::Approved as i32,
+                            iterations: vec![],
+                            final_pdf: None,
+                            final_pdf_filename: None,
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!("Approval {} not found or not in awaiting state", approval_id);
+                        return Err(Status::not_found(format!("Approval {} not found or not awaiting response", approval_id)));
+                    }
+                    Err(e) => {
+                        log::error!("Failed to process approval {}: {}", approval_id, e);
+                        return Err(Status::internal(format!("Failed to process approval: {}", e)));
+                    }
+                }
+            }
+            workflow_grpc::approval_response::Decision::Rejected | 
+            workflow_grpc::approval_response::Decision::NeedsRevision => {
+                // Convert string ID to ApprovalId type
+                let approval_id_typed = workflow_core::workflow::approval_types::ApprovalId::from(approval_id.clone());
+                let decision = approval.decision();
+                let feedback = approval.feedback.unwrap_or_else(|| "No feedback provided".to_string());
+                let user_id = workflow_core::workflow::approval_types::UserId::new(approval.decided_by);
+                
+                // Process rejection/revision through the queue
+                match self.approval_queue.handle_user_feedback(&approval_id_typed, feedback, user_id) {
+                    Ok(Some(_approval_data)) => {
+                        log::info!("Successfully processed feedback for approval: {}", approval_id);
+                        
+                        ProtoApprovalState {
+                            approval_id: approval_id.clone(),
+                            status: if decision == workflow_grpc::approval_response::Decision::Rejected {
+                                workflow_grpc::approval_state::Status::Rejected as i32
+                            } else {
+                                workflow_grpc::approval_state::Status::InRevision as i32
+                            },
+                            iterations: vec![],
+                            final_pdf: None,
+                            final_pdf_filename: None,
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!("Approval {} not found or not in awaiting state", approval_id);
+                        return Err(Status::not_found(format!("Approval {} not found or not awaiting response", approval_id)));
+                    }
+                    Err(e) => {
+                        log::error!("Failed to process feedback for approval {}: {}", approval_id, e);
+                        return Err(Status::internal(format!("Failed to process feedback: {}", e)));
+                    }
+                }
+            }
+            _ => {
+                return Err(Status::invalid_argument("Unknown approval decision"));
+            }
         };
         
-        Ok(Response::new(state.clone()))
+        Ok(Response::new(result))
     }
     
     async fn get_pending_approvals(
@@ -255,11 +317,46 @@ impl ApprovalService for GrpcServiceWrapper {
     ) -> Result<Response<ProtoApprovalState>, Status> {
         let approval_id = request.into_inner().approval_id;
         
-        let states = self.approval_states.read().await;
-        states.get(&approval_id)
-            .cloned()
-            .ok_or_else(|| Status::not_found(format!("Approval {} not found", approval_id)))
-            .map(Response::new)
+        log::info!("=== GET APPROVAL STATE CALLED for ID: {} ===", approval_id);
+        
+        // First, try to get the approval from the ApprovalQueue (disk storage)
+        let approval_id_typed = workflow_core::workflow::approval_types::ApprovalId::from(approval_id.clone());
+        
+        match self.approval_queue.get_approval_request(&approval_id_typed, None) {
+            Ok(Some(approval_data)) => {
+                log::info!("Found approval {} with state: {:?}", approval_id, approval_data.state);
+                
+                // Convert ApprovalData to ProtoApprovalState
+                let proto_state = ProtoApprovalState {
+                    approval_id: approval_id.clone(),
+                    status: match approval_data.state {
+                        workflow_core::workflow::approval_types::ApprovalState::PendingApproval => 
+                            workflow_grpc::approval_state::Status::Pending as i32,
+                        workflow_core::workflow::approval_types::ApprovalState::AwaitingUserResponse => 
+                            workflow_grpc::approval_state::Status::Pending as i32,  // Map to Pending since there's no AwaitingResponse
+                        workflow_core::workflow::approval_types::ApprovalState::Approved => 
+                            workflow_grpc::approval_state::Status::Approved as i32,
+                        workflow_core::workflow::approval_types::ApprovalState::NeedsImprovement => 
+                            workflow_grpc::approval_state::Status::InRevision as i32,
+                        workflow_core::workflow::approval_types::ApprovalState::Failed => 
+                            workflow_grpc::approval_state::Status::Rejected as i32,  // Map Failed to Rejected
+                    },
+                    iterations: vec![],  // TODO: Convert letter history
+                    final_pdf: None,     // TODO: Add PDF support
+                    final_pdf_filename: None,
+                };
+                
+                Ok(Response::new(proto_state))
+            }
+            Ok(None) => {
+                log::warn!("Approval {} not found in ApprovalQueue", approval_id);
+                Err(Status::not_found(format!("Approval {} not found", approval_id)))
+            }
+            Err(e) => {
+                log::error!("Error reading approval {}: {}", approval_id, e);
+                Err(Status::internal(format!("Failed to read approval: {}", e)))
+            }
+        }
     }
     
     type StreamApprovalUpdatesStream = Pin<Box<dyn Stream<Item = Result<ApprovalUpdate, Status>> + Send>>;
@@ -341,9 +438,10 @@ impl Health for GrpcServiceWrapper {
 /// Start the gRPC server
 pub async fn start_grpc_server(
     orchestrator: Arc<WorkflowOrchestrator<WorkflowProcessor>>,
+    approval_queue: Arc<workflow_core::workflow::ApprovalQueue>,
     addr: std::net::SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let service_wrapper = GrpcServiceWrapper::new(orchestrator);
+    let service_wrapper = GrpcServiceWrapper::new(orchestrator, approval_queue);
     
     let workflow_service = WorkflowServiceServer::new(service_wrapper.clone());
     let approval_service = ApprovalServiceServer::new(service_wrapper.clone());

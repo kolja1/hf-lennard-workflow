@@ -17,4 +17,4 @@ pub use letterexpress::LetterExpressClient;
 pub use letter_service::LetterServiceClient;
 pub use pdf::PDFService;
 pub use nango::NangoClient;
-pub use telegram::TelegramClient;
+pub use telegram::{TelegramClient, TelegramClientTrait};

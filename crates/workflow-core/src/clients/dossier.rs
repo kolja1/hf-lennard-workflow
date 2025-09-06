@@ -109,11 +109,11 @@ impl DossierClient {
                                         log::info!("Address extraction successful");
                                     }
                                     
-                                    return Ok(DossierResult {
+                                    Ok(DossierResult {
                                         company_dossier_content: company_dossier.content,
                                         company_name: company_dossier.company_name,
                                         mailing_address,
-                                    });
+                                    })
                                 }
                                 Err(e) => {
                                     // Log error to file
@@ -121,23 +121,23 @@ impl DossierClient {
                                     let error_log_path = self.log_grpc_error(&error_msg, contact_id, &timestamp)?;
                                     log::error!("Logged gRPC error to: {}", error_log_path.display());
                                     
-                                    return Err(LennardError::ServiceUnavailable(
+                                    Err(LennardError::ServiceUnavailable(
                                         format!("gRPC call to dossier service failed: {}", e)
-                                    ));
+                                    ))
                                 }
                             }
                         }
                         Err(e) => {
-                            return Err(LennardError::ServiceUnavailable(
+                            Err(LennardError::ServiceUnavailable(
                                 format!("Could not connect to gRPC dossier service at {}: {}", self.grpc_url, e)
-                            ));
+                            ))
                         }
                     }
                 }
                 Err(e) => {
-                    return Err(LennardError::Config(
+                    Err(LennardError::Config(
                         format!("Invalid gRPC URL {}: {}", self.grpc_url, e)
-                    ));
+                    ))
                 }
             }
     }

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use crate::error::Result;
 use crate::types::{ZohoContact, LinkedInProfile, MailingAddress};
 use crate::clients::DossierResult;
-use super::approval_types::{LetterContent, ApprovalState};
+use super::approval_types::{LetterContent, ApprovalState, ApprovalId};
 use zoho_generated_types::TasksResponse;
 
 /// Trait defining the individual workflow steps with strongly-typed parameters
@@ -35,9 +35,12 @@ pub trait WorkflowSteps: Send + Sync {
     /// Step 5: Generate letter - requires contact, profile and dossier, returns required LetterContent
     async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile, dossier: &DossierResult) -> Result<LetterContent>;
     
-    /// Step 6: Request approval - requires letter, returns approval status
-    /// Note: This may create long-running approval requests handled by ApprovalQueue
-    async fn request_approval(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<ApprovalState>;
+    /// Step 6a: Start approval - creates and persists the approval request, returns approval ID
+    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, letter: &LetterContent) -> Result<ApprovalId>;
+    
+    /// Step 6b: Request approval - sends the approval request notification, returns approval status
+    /// Note: This sends the notification for an already-created approval
+    async fn request_approval(&self, approval_id: &ApprovalId, letter: &LetterContent, contact: &ZohoContact) -> Result<ApprovalState>;
     
     /// Step 7: Send PDF - requires approved letter and contact, returns tracking ID
     async fn send_pdf(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<String>;

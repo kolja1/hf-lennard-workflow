@@ -52,7 +52,7 @@ impl BaserowClient {
             .await?;
             
         if !response.status().is_success() {
-            return Err(LennardError::Http(reqwest::Error::from(response.error_for_status().unwrap_err())));
+            return Err(LennardError::Http(response.error_for_status().unwrap_err()));
         }
         
         let data: Value = response.json().await?;
@@ -79,7 +79,7 @@ impl BaserowClient {
             .await?;
             
         if !response.status().is_success() {
-            return Err(LennardError::Http(reqwest::Error::from(response.error_for_status().unwrap_err())));
+            return Err(LennardError::Http(response.error_for_status().unwrap_err()));
         }
         
         let data: Value = response.json().await?;

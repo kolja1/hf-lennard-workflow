@@ -104,7 +104,7 @@ impl NangoClient {
             .query(&params)
             .send()
             .await
-            .map_err(|e| LennardError::Http(e))?;
+            .map_err(LennardError::Http)?;
             
         if !response.status().is_success() {
             return Err(LennardError::Auth(format!(
@@ -115,7 +115,7 @@ impl NangoClient {
         }
         
         let data: Value = response.json().await
-            .map_err(|e| LennardError::Http(e))?;
+            .map_err(LennardError::Http)?;
             
         // Extract token and expiry
         let access_token = self.extract_access_token(&data)?;

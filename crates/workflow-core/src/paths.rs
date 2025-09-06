@@ -11,38 +11,44 @@ static LOGS_ROOT: OnceCell<String> = OnceCell::new();
 // Static storage for configurable templates root
 static TEMPLATES_ROOT: OnceCell<String> = OnceCell::new();
 
-// Default root constants
+// Default root constants - only used in tests
+#[cfg(test)]
 const DEFAULT_WORKFLOW_DATA_ROOT: &str = "/data/workflows";
+#[cfg(test)]
 const DEFAULT_LOGS_ROOT: &str = "/logs";
 const DEFAULT_TEMPLATES_ROOT: &str = "/app/templates";
 pub const APP_ROOT: &str = "/app";
 
 /// Initialize the data root directory. Can only be called once.
-/// If not called, the default `/data/workflows` will be used.
+/// MUST be called before using any data paths.
 pub fn init_data_root(path: String) -> Result<(), String> {
     DATA_ROOT.set(path).map_err(|_| "Data root already initialized".to_string())
 }
 
 /// Initialize the logs root directory. Can only be called once.
-/// If not called, the default `/logs` will be used.
+/// MUST be called before using any log paths.
 pub fn init_logs_root(path: String) -> Result<(), String> {
     LOGS_ROOT.set(path).map_err(|_| "Logs root already initialized".to_string())
 }
 
 /// Initialize the templates root directory. Can only be called once.
-/// If not called, the default `/app/templates` will be used.
+/// MUST be called before using any template paths.
 pub fn init_templates_root(path: String) -> Result<(), String> {
     TEMPLATES_ROOT.set(path).map_err(|_| "Templates root already initialized".to_string())
 }
 
-/// Get the configured data root or the default
+/// Get the configured data root - panics if not initialized
 fn get_data_root() -> &'static str {
-    DATA_ROOT.get().map(|s| s.as_str()).unwrap_or(DEFAULT_WORKFLOW_DATA_ROOT)
+    DATA_ROOT.get()
+        .map(|s| s.as_str())
+        .expect("Data root not initialized! Call init_data_root() first")
 }
 
-/// Get the configured logs root or the default
+/// Get the configured logs root - panics if not initialized
 fn get_logs_root() -> &'static str {
-    LOGS_ROOT.get().map(|s| s.as_str()).unwrap_or(DEFAULT_LOGS_ROOT)
+    LOGS_ROOT.get()
+        .map(|s| s.as_str())
+        .expect("Logs root not initialized! Call init_logs_root() first")
 }
 
 /// Get the configured templates root or the default
@@ -72,6 +78,7 @@ pub const FAILED_STATE_DIR_NAME: &str = "failed";
 pub const DOSSIERS_DIR_NAME: &str = "dossiers";
 pub const LETTERS_DIR_NAME: &str = "letters";
 pub const ATTACHMENTS_DIR_NAME: &str = "attachments";
+pub const PDFS_DIR_NAME: &str = "pdfs";
 
 // App subdirectories
 pub const CONFIG_DIR_NAME: &str = "config";
@@ -110,6 +117,10 @@ pub fn attachments_dir() -> PathBuf {
     data_dir().join(ATTACHMENTS_DIR_NAME)
 }
 
+pub fn pdfs_dir() -> PathBuf {
+    data_dir().join(PDFS_DIR_NAME)
+}
+
 pub fn approval_state_dir(state_name: &str) -> PathBuf {
     workflow_data_root().join(state_name)
 }
@@ -124,6 +135,14 @@ pub fn awaiting_response_dir() -> PathBuf {
 
 pub fn approved_dir() -> PathBuf {
     approval_state_dir(APPROVED_DIR_NAME)
+}
+
+pub fn processed_dir() -> PathBuf {
+    workflow_data_root().join(PROCESSED_DIR_NAME)
+}
+
+pub fn failed_dir() -> PathBuf {
+    workflow_data_root().join(FAILED_DIR_NAME)
 }
 
 pub fn needs_improvement_dir() -> PathBuf {
@@ -163,6 +182,10 @@ pub fn dossier_logs_dir() -> PathBuf {
     grpc_logs_dir().join("dossier")
 }
 
+pub fn letterexpress_logs_dir() -> PathBuf {
+    logs_root().join("letterexpress")
+}
+
 /// Get all directories that should be created for the workflow system
 pub fn all_workflow_directories() -> Vec<PathBuf> {
     vec![
@@ -174,11 +197,13 @@ pub fn all_workflow_directories() -> Vec<PathBuf> {
         dossiers_dir(),
         letters_dir(),
         attachments_dir(),
+        pdfs_dir(),
         pending_approval_dir(),
         awaiting_response_dir(),
         approved_dir(),
         needs_improvement_dir(),
         failed_state_dir(),
+        letterexpress_logs_dir(),
     ]
 }
 
@@ -187,15 +212,23 @@ pub fn all_workflow_directories() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    
+    fn setup_test_paths() {
+        // Initialize paths for testing if not already done
+        let _ = init_data_root(DEFAULT_WORKFLOW_DATA_ROOT.to_string());
+        let _ = init_logs_root(DEFAULT_LOGS_ROOT.to_string());
+    }
 
     #[test]
     fn test_root_constants() {
+        setup_test_paths();
         assert_eq!(workflow_data_root_str(), "/data/workflows");
         assert_eq!(APP_ROOT, "/app");
     }
 
     #[test]
     fn test_path_building_from_root() {
+        setup_test_paths();
         // Test that all paths are built from the root constants
         assert_eq!(triggers_dir().to_str().unwrap(), "/data/workflows/triggers");
         assert_eq!(triggers_processed_dir().to_str().unwrap(), "/data/workflows/triggers/processed");
@@ -209,6 +242,7 @@ mod tests {
 
     #[test]
     fn test_approval_state_directories() {
+        setup_test_paths();
         assert_eq!(pending_approval_dir().to_str().unwrap(), "/data/workflows/pending_approval");
         assert_eq!(awaiting_response_dir().to_str().unwrap(), "/data/workflows/awaiting_response");
         assert_eq!(approved_dir().to_str().unwrap(), "/data/workflows/approved");
@@ -218,6 +252,7 @@ mod tests {
 
     #[test]
     fn test_app_paths() {
+        setup_test_paths();
         assert_eq!(config_dir().to_str().unwrap(), "/app/config");
         assert_eq!(credentials_path().to_str().unwrap(), "/app/config/credentials.json");
         // Templates dir now uses configurable path with default
@@ -226,6 +261,7 @@ mod tests {
 
     #[test]
     fn test_all_paths_start_with_roots() {
+        setup_test_paths();
         // Verify that all workflow paths start with the workflow root
         let workflow_paths = vec![
             triggers_dir(),
@@ -273,6 +309,7 @@ mod tests {
 
     #[test]
     fn test_all_directories_unique() {
+        setup_test_paths();
         let all_dirs = all_workflow_directories();
         let unique_dirs: HashSet<_> = all_dirs.iter().collect();
         
@@ -285,6 +322,7 @@ mod tests {
 
     #[test]
     fn test_no_hardcoded_paths_in_functions() {
+        setup_test_paths();
         // This test verifies that functions build paths dynamically
         // If we change WORKFLOW_DATA_ROOT, all dependent paths should change
         
@@ -300,6 +338,7 @@ mod tests {
 
     #[test]
     fn test_directory_hierarchy() {
+        setup_test_paths();
         // Test that subdirectories are properly nested
         assert!(triggers_processed_dir().starts_with(triggers_dir()));
         assert!(triggers_failed_dir().starts_with(triggers_dir()));
@@ -313,6 +352,7 @@ mod tests {
 
     #[test]
     fn test_all_workflow_directories_coverage() {
+        setup_test_paths();
         let all_dirs = all_workflow_directories();
         
         // Verify all expected directories are included
@@ -324,18 +364,21 @@ mod tests {
         assert!(all_dirs.contains(&dossiers_dir()));
         assert!(all_dirs.contains(&letters_dir()));
         assert!(all_dirs.contains(&attachments_dir()));
+        assert!(all_dirs.contains(&pdfs_dir()));
         assert!(all_dirs.contains(&pending_approval_dir()));
         assert!(all_dirs.contains(&awaiting_response_dir()));
         assert!(all_dirs.contains(&approved_dir()));
         assert!(all_dirs.contains(&needs_improvement_dir()));
         assert!(all_dirs.contains(&failed_state_dir()));
+        assert!(all_dirs.contains(&letterexpress_logs_dir()));
         
-        // Should have exactly 13 directories
-        assert_eq!(all_dirs.len(), 13);
+        // Should have exactly 15 directories
+        assert_eq!(all_dirs.len(), 15);
     }
 
     #[test]
     fn test_path_consistency_with_approval_states() {
+        setup_test_paths();
         // Test that approval state names match what ApprovalState enum would use
         let expected_state_dirs = vec![
             "pending_approval",

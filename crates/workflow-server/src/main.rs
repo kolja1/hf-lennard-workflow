@@ -7,14 +7,13 @@ mod grpc_service;
 use clap::{Arg, Command};
 use workflow_core::{
     LennardConfig, 
-    workflow::{WorkflowOrchestrator, approval_types::WorkflowTrigger}, 
+    workflow::{WorkflowOrchestrator, ApprovalWatcher, approval_types::WorkflowTrigger}, 
     services::WorkflowProcessor,
     clients::{BaserowClient, ZohoClient, DossierClient, LetterExpressClient, LetterServiceClient, PDFService, TelegramClient},
     services::AddressExtractor,
     paths,
 };
 use std::sync::Arc;
-use tokio;
 use notify::{RecommendedWatcher, Watcher, RecursiveMode, Event, EventKind};
 use std::sync::mpsc::channel;
 use std::path::Path;
@@ -135,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pdf_service = Arc::new(PDFService::new(config.pdf_service.clone()));
     let address_extractor = Arc::new(AddressExtractor::new(config.openai.clone()));
     let letter_service = Arc::new(LetterServiceClient::new(config.letter_service.clone()));
-    let telegram_client = Arc::new(TelegramClient::new(config.telegram.clone()));
+    let telegram_client: Arc<dyn workflow_core::clients::TelegramClientTrait> = Arc::new(TelegramClient::new(config.telegram.clone()));
     
     // Create ApprovalQueue with the workflows data directory
     let approval_queue = Arc::new(
@@ -154,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         address_extractor,
         letter_service,
         telegram_client,
-        approval_queue,
+        approval_queue.clone(),
     );
     
     // Create orchestrator with strongly-typed workflow steps
@@ -202,19 +201,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         
         log::info!("Starting gRPC server on port {}", port);
         
-        // Start both gRPC server and workflow monitor in parallel
+        // Start gRPC server, workflow monitor, and approval watcher in parallel
         let orchestrator_grpc = orchestrator.clone();
         let orchestrator_monitor = orchestrator.clone();
+        let orchestrator_watcher = orchestrator.clone();
+        
+        let approval_queue_grpc = approval_queue.clone();
+        let approval_queue_watcher = approval_queue.clone();
+        
+        // Create approval watcher
+        let approval_watcher = Arc::new(ApprovalWatcher::new(
+            approval_queue_watcher,
+            orchestrator_watcher,
+        ));
         
         let grpc_handle = tokio::spawn(async move {
-            grpc_service::start_grpc_server(orchestrator_grpc, addr).await
+            grpc_service::start_grpc_server(orchestrator_grpc, approval_queue_grpc, addr).await
         });
         
         let monitor_handle = tokio::spawn(async move {
             monitor_workflows(orchestrator_monitor).await
         });
         
-        // Wait for either to complete (or fail)
+        let watcher_handle = tokio::spawn(async move {
+            approval_watcher.start().await;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+        
+        // Wait for any to complete (or fail)
         tokio::select! {
             result = grpc_handle => {
                 match result {
@@ -238,6 +252,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     Err(e) => {
                         log::error!("Workflow monitor task panicked: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            result = watcher_handle => {
+                match result {
+                    Ok(Ok(_)) => log::info!("Approval watcher exited normally"),
+                    Ok(Err(e)) => {
+                        log::error!("Approval watcher failed: {}", e);
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        log::error!("Approval watcher task panicked: {}", e);
                         std::process::exit(1);
                     }
                 }

@@ -1,7 +1,7 @@
 //! Workflow orchestrator with strongly-typed steps
 
 use super::traits::WorkflowSteps;
-use super::approval_types::{WorkflowTrigger, ApprovalState};
+use super::approval_types::WorkflowTrigger;
 use crate::error::{LennardError, Result};
 use chrono::Utc;
 
@@ -160,12 +160,11 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         
         log::info!("Step 4: Generated letter with subject '{}'", letter.subject);
         
-        // Step 5: Request approval - requires letter, returns approval status
-        // This may create a long-running approval request via ApprovalQueue
-        let approval = match self.steps.request_approval(&letter, &contact).await {
-            Ok(a) => a,
+        // Step 5a: Start approval - creates and persists the approval request
+        let approval_id = match self.steps.approval_start(&task.id, &contact, &letter).await {
+            Ok(id) => id,
             Err(e) => {
-                let error = LennardError::Workflow(format!("Step 5 (request approval) failed: {}", e));
+                let error = LennardError::Workflow(format!("Step 5a (approval start) failed: {}", e));
                 // Send error notification with full context using extracted company name
                 if let Err(notify_err) = self.steps.send_error_notification(
                     &task.id,
@@ -185,32 +184,87 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
             }
         };
         
-        log::info!("Step 5: Approval status: {:?}", approval);
+        log::info!("Step 5a: Created approval with ID: {}", approval_id);
         
-        // Step 6 & 7 only proceed if approved
-        match approval {
-            ApprovalState::Approved => {
-                // Step 6: Send PDF - requires approved letter and contact
-                let tracking_id = self.steps.send_pdf(&letter, &contact).await
-                    .map_err(|e| LennardError::Workflow(format!("Step 6 (send PDF) failed: {}", e)))?;
-                    
-                log::info!("Step 6: Letter sent successfully, tracking: {}", tracking_id);
-                    
-                Ok(format!("Letter sent successfully, tracking: {}", tracking_id))
-            }
-            _ => {
-                // Workflow paused - approval is pending or needs improvement
-                let status_message = match approval {
-                    ApprovalState::PendingApproval => "Approval request created, awaiting user response",
-                    ApprovalState::AwaitingUserResponse => "Awaiting user response via Telegram",
-                    ApprovalState::NeedsImprovement => "User requested letter improvements",
-                    ApprovalState::Failed => "Approval process failed",
-                    ApprovalState::Approved => unreachable!("Already handled above"),
-                };
+        // Step 5b: Request approval - sends the notification for the persisted approval
+        let approval_state = match self.steps.request_approval(&approval_id, &letter, &contact).await {
+            Ok(a) => a,
+            Err(e) => {
+                let error = LennardError::Workflow(format!("Step 5b (request approval) failed: {}", e));
+                // Send error notification with full context using extracted company name
+                if let Err(notify_err) = self.steps.send_error_notification(
+                    &task.id,
+                    &contact.full_name,
+                    &company_name,
+                    &error.to_string()
+                ).await {
+                    log::error!("Failed to send error notification: {}", notify_err);
+                }
                 
-                Ok(status_message.to_string())
+                // Update task status
+                if let Err(status_err) = self.steps.update_task_error_status(&task.id, &error.to_string()).await {
+                    log::error!("Failed to update task status: {}", status_err);
+                }
+                
+                return Err(error);
             }
-        }
+        };
+        
+        log::info!("Step 5b: Approval status: {:?}", approval_state);
+        
+        // IMPORTANT: Workflow STOPS here and waits for user approval
+        // The workflow will be continued via continue_after_approval() when the user approves
+        // We should NEVER immediately proceed to Step 6 here
+        
+        Ok("Awaiting user response via Telegram".to_string())
+    }
+    
+    /// Continue workflow after approval - complete Step 6 (send PDF via LetterExpress)
+    pub async fn continue_after_approval(&self, approval_data: &super::approval_types::ApprovalData) -> Result<String> {
+        use base64::{Engine as _, engine::general_purpose};
+        
+        log::info!("Continuing workflow after approval for task: {}", approval_data.task_id);
+        
+        // The approval contains everything we need:
+        // - The approved letter content
+        // - The mailing address 
+        // - The PDF (base64 encoded)
+        
+        // Check we have the required data
+        let mailing_address = approval_data.mailing_address.as_ref()
+            .ok_or_else(|| LennardError::Workflow("Approval missing mailing address".to_string()))?;
+        
+        let pdf_base64 = approval_data.pdf_base64.as_ref()
+            .ok_or_else(|| LennardError::Workflow("Approval missing PDF data".to_string()))?;
+        
+        // Decode the PDF
+        let _pdf_data = general_purpose::STANDARD.decode(pdf_base64)
+            .map_err(|e| LennardError::Workflow(format!("Failed to decode PDF: {}", e)))?;
+        
+        // We need a minimal contact object for send_pdf
+        // Since we can't easily reconstruct the full ZohoContact, we'll create a minimal one
+        let contact = crate::types::ZohoContact {
+            id: approval_data.contact_id.to_string(),
+            full_name: approval_data.recipient_name.clone(),
+            company: Some(approval_data.company_name.clone()),
+            mailing_address: Some(mailing_address.clone()),
+            email: None,
+            phone: None,
+            linkedin_id: None,
+        };
+        
+        // Step 6: Send PDF via LetterExpress
+        // NOTE: send_pdf will regenerate the PDF from the letter content
+        // This is OK because we have all the data needed (letter + address)
+        // In the future, we could optimize to reuse the existing PDF
+        let tracking_id = self.steps.send_pdf(&approval_data.current_letter, &contact).await
+            .map_err(|e| LennardError::Workflow(format!("Step 6 (send PDF) failed after approval: {}", e)))?;
+            
+        log::info!("Step 6: Letter sent successfully after approval, tracking: {}", tracking_id);
+        
+        // TODO: Update task status in Zoho to mark as completed
+        
+        Ok(format!("Letter sent successfully after approval, tracking: {}", tracking_id))
     }
 }
 
@@ -341,7 +395,15 @@ mod tests {
             })
         }
         
-        async fn request_approval(&self, _letter: &LetterContent, _contact: &ZohoContact) -> Result<ApprovalState> {
+        async fn approval_start(&self, _task_id: &str, _contact: &ZohoContact, _letter: &LetterContent) -> Result<ApprovalId> {
+            if self.should_fail_at_step == Some("approval_start") {
+                return Err(LennardError::ServiceUnavailable("Approval start failed".to_string()));
+            }
+            // Return a mock approval ID
+            Ok(ApprovalId::new())
+        }
+        
+        async fn request_approval(&self, _approval_id: &ApprovalId, _letter: &LetterContent, _contact: &ZohoContact) -> Result<ApprovalState> {
             if self.should_fail_at_step == Some("request_approval") {
                 return Err(LennardError::ServiceUnavailable("Approval request failed".to_string()));
             }
