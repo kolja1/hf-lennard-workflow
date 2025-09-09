@@ -1,1 +1,5 @@
 - check, if docker-compose.dev.yml can be removed
+- docker/volumes/workflow-data/workflows seems to be a duplicated structure - find creator and fix
+- callback data format should be generated in telegram bot only
+- explain/remove: test_approval_persists_to_disk_across_restart
+- why are we not just testing persistence on the approval_queue directly ?

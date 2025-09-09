@@ -7,9 +7,12 @@ use crate::clients::dossier::DossierResult;
 use letter_grpc_client::{
     LetterGenerationServiceClient,
     GenerateLetterRequest,
+    GenerateLetterWithApprovalRequest,
     RecipientInfo,
     CompanyInfo,
     DossierContent,
+    ApprovalData,
+    LetterHistoryEntry,
 };
 use tonic::transport::Channel;
 
@@ -119,6 +122,118 @@ impl LetterServiceClient {
             sender_name: letter_grpc.sender_name,
             recipient_name: contact.full_name.clone(),
             company_name: dossier_result.company_name.clone(),
+        })
+    }
+    
+    /// Generate improved letter based on feedback with full approval context
+    pub async fn generate_improved_letter_with_approval(
+        &self,
+        approval_data: &crate::workflow::approval_types::ApprovalData,
+        feedback: &str
+    ) -> Result<LetterContent> {
+        // Validate that we have required mailing address
+        let mailing_address = approval_data.mailing_address.as_ref()
+            .ok_or_else(|| LennardError::Workflow(
+                format!("Missing mailing address for approval {}. Cannot generate letter without recipient address.", 
+                        approval_data.approval_id)
+            ))?;
+        // Create gRPC connection on-demand
+        let channel = Channel::from_shared(self.grpc_url.clone())
+            .map_err(|e| LennardError::Config(format!("Invalid gRPC URL: {}", e)))?
+            .connect()
+            .await
+            .map_err(|e| LennardError::ServiceUnavailable(
+                format!("Failed to connect to letter service at {}: {}", self.grpc_url, e)
+            ))?;
+            
+        log::info!("Connected to letter generation service for improvement request");
+        let mut grpc_client = LetterGenerationServiceClient::new(channel);
+        
+        // Build letter history from approval data
+        let letter_history: Vec<LetterHistoryEntry> = approval_data.letter_history.iter().map(|entry| {
+            LetterHistoryEntry {
+                iteration: entry.iteration as i32,
+                content: format!("{}\n{}\n{}", entry.content.subject, entry.content.greeting, entry.content.body),
+                timestamp: entry.created_at.to_rfc3339(),
+                generated_by: "AI".to_string(),
+                feedback: entry.feedback.as_ref().map(|f| f.text.clone()).unwrap_or_default(),
+            }
+        }).collect();
+        
+        // Build approval data for the gRPC request
+        let grpc_approval_data = ApprovalData {
+            approval_id: approval_data.approval_id.to_string(),
+            state: "needs_improvement".to_string(),
+            created_at: approval_data.requested_at.to_rfc3339(),
+            updated_at: approval_data.updated_at.to_rfc3339(),
+            letter_content: format!("{}\n{}\n{}", 
+                approval_data.current_letter.subject, 
+                approval_data.current_letter.greeting, 
+                approval_data.current_letter.body),
+            contact_name: approval_data.recipient_name.clone(),
+            company_name: approval_data.company_name.clone(),
+            letter_history,
+            current_iteration: approval_data.letter_history.len() as i32 + 1,
+            zoho_task_id: approval_data.task_id.to_string(),
+            feedback_text: feedback.to_string(),
+            regeneration_requested: true,
+        };
+        
+        // Build request using the approval-aware endpoint with full context
+        let request = tonic::Request::new(GenerateLetterWithApprovalRequest {
+            approval_data: Some(grpc_approval_data),
+            recipient_info: Some(RecipientInfo {
+                first_name: "".to_string(), // Not needed when full_name is provided
+                last_name: "".to_string(),  // Not needed when full_name is provided
+                full_name: approval_data.recipient_name.clone(),
+                email: "".to_string(), // Email not available in ApprovalData
+                title: "".to_string(), // Title not available in ApprovalData
+                account_name: approval_data.company_name.clone(),
+                mailing_street: mailing_address.street.clone(),
+                mailing_city: mailing_address.city.clone(),
+                mailing_zip: mailing_address.postal_code.clone(),
+                mailing_country: mailing_address.country.clone(),
+            }),
+            company_info: Some(CompanyInfo {
+                account_name: approval_data.company_name.clone(),
+                industry: "".to_string(), // Industry not available in ApprovalData
+                website: "".to_string(), // Website not available in ApprovalData
+            }),
+            our_company_info: "Lennard Company".to_string(),
+            letter_type: "improvement".to_string(),
+            dossier_content: None, // Original dossier not stored in ApprovalData
+        });
+        
+        log::info!("Sending improvement request to gRPC service with feedback and full context");
+        
+        // Call the gRPC service
+        let response = grpc_client
+            .generate_letter_with_approval(request)
+            .await
+            .map_err(|e| LennardError::ServiceUnavailable(
+                format!("Letter improvement service failed: {}", e)
+            ))?;
+            
+        let response_inner = response.into_inner();
+        
+        if !response_inner.success {
+            return Err(LennardError::Processing(
+                format!("Letter generation failed: {}", response_inner.error_message)
+            ));
+        }
+        
+        let letter_grpc = response_inner.letter
+            .ok_or_else(|| LennardError::Workflow("No improved letter returned from service".to_string()))?;
+            
+        log::info!("Successfully received improved letter from gRPC service");
+        
+        Ok(LetterContent {
+            subject: letter_grpc.betreff,
+            greeting: letter_grpc.anrede,
+            body: letter_grpc.brieftext,
+            sender_name: letter_grpc.sender_name,
+            recipient_name: approval_data.recipient_name.clone(),
+            company_name: approval_data.company_name.clone(),
         })
     }
 }

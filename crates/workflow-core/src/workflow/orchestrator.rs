@@ -219,6 +219,67 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         Ok("Awaiting user response via Telegram".to_string())
     }
     
+    /// Process improvement request - generate an improved letter based on feedback
+    pub async fn process_improvement_request(
+        &self, 
+        approval_data: &super::approval_types::ApprovalData,
+        feedback: &str
+    ) -> Result<super::approval_types::ApprovalData> {
+        use crate::workflow::approval_types::{ApprovalState, LetterHistoryEntry};
+        use chrono::Utc;
+        use base64::Engine;
+        
+        log::info!("Processing improvement request for approval {}", approval_data.approval_id);
+        log::info!("Feedback: {}", feedback);
+        
+        // Create a new iteration of the letter using the feedback
+        let mut improved_approval = approval_data.clone();
+        
+        // Generate improved letter using the letter service with feedback
+        let improved_letter = self.steps.generate_improved_letter(
+            approval_data,
+            feedback
+        ).await?;
+        
+        log::info!("Generated improved letter for approval {}", approval_data.approval_id);
+        
+        // Add current letter to history before updating
+        let history_entry = LetterHistoryEntry {
+            iteration: improved_approval.letter_history.len() as u32 + 1,
+            content: approval_data.current_letter.clone(),
+            feedback: approval_data.letter_history.last()
+                .and_then(|e| e.feedback.clone()),
+            created_at: Utc::now(),
+        };
+        improved_approval.letter_history.push(history_entry);
+        
+        // Update with improved letter
+        improved_approval.current_letter = improved_letter;
+        improved_approval.state = ApprovalState::PendingApproval;
+        improved_approval.updated_at = Utc::now();
+        
+        // Generate new PDF for the improved letter using the stored mailing address
+        let mailing_address = improved_approval.mailing_address.as_ref()
+            .ok_or_else(|| LennardError::Workflow("Missing mailing address in approval data".to_string()))?;
+        let pdf_bytes = self.steps.generate_pdf_with_address(&improved_approval.current_letter, mailing_address).await?;
+        improved_approval.pdf_base64 = Some(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes));
+        
+        // Send the improved letter to Telegram for re-approval
+        log::info!("Sending improved letter to Telegram for approval {}", improved_approval.approval_id);
+        self.steps.send_improved_approval_to_telegram(&improved_approval).await?;
+        
+        // Set state to awaiting response since we sent to Telegram
+        improved_approval.state = ApprovalState::AwaitingUserResponse;
+        
+        // Log that the approval update is ready
+        self.steps.request_approval_update(
+            &improved_approval.approval_id.to_string(),
+            improved_approval.letter_history.len()
+        ).await?;
+        
+        Ok(improved_approval)
+    }
+    
     /// Continue workflow after approval - complete Step 6 (send PDF via LetterExpress)
     pub async fn continue_after_approval(&self, approval_data: &super::approval_types::ApprovalData) -> Result<String> {
         use base64::{Engine as _, engine::general_purpose};

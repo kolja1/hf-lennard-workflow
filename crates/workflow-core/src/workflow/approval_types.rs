@@ -44,38 +44,6 @@ impl From<String> for ApprovalId {
     }
 }
 
-/// Strongly typed WorkflowId
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct WorkflowId(String);
-
-impl Default for WorkflowId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WorkflowId {
-    pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4().to_string())
-    }
-    
-    pub fn from_string(s: &str) -> Result<Self, String> {
-        uuid::Uuid::parse_str(s)
-            .map(|_| Self(s.to_string()))
-            .map_err(|e| format!("Invalid WorkflowId format: {}", e))
-    }
-    
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for WorkflowId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 /// Strongly typed TaskId from Zoho
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskId(String);
@@ -205,7 +173,6 @@ pub struct LetterHistoryEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalData {
     pub approval_id: ApprovalId,
-    pub workflow_id: WorkflowId,
     pub task_id: TaskId,
     pub contact_id: ContactId,
     pub state: ApprovalState,
@@ -237,7 +204,6 @@ impl ApprovalData {
     ) -> Self {
         let now = Utc::now();
         let approval_id = ApprovalId::new();
-        let workflow_id = WorkflowId::new();
         
         let first_entry = LetterHistoryEntry {
             iteration: 1,
@@ -248,7 +214,6 @@ impl ApprovalData {
         
         Self {
             approval_id,
-            workflow_id,
             task_id,
             contact_id,
             state: ApprovalState::PendingApproval,

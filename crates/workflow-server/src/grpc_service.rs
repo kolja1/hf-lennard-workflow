@@ -1,7 +1,6 @@
 //! gRPC service implementation wrapping the existing workflow orchestrator
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use workflow_grpc::{
     WorkflowService, WorkflowServiceServer,
@@ -26,15 +25,12 @@ use workflow_core::{
 use futures::Stream;
 use tokio_stream::wrappers::ReceiverStream;
 use std::pin::Pin;
-use std::collections::HashMap;
 
 /// Wrapper struct for gRPC services
 #[derive(Clone)]
 pub struct GrpcServiceWrapper {
     orchestrator: Arc<WorkflowOrchestrator<WorkflowProcessor>>,
-    // Store workflow states in memory (in production, use a database)
-    workflow_states: Arc<RwLock<HashMap<String, ProtoWorkflowState>>>,
-    // Approval states are now managed by ApprovalQueue (disk-based storage)
+    // Approval states are managed by ApprovalQueue (disk-based storage)
     approval_queue: Arc<workflow_core::workflow::ApprovalQueue>,
 }
 
@@ -45,7 +41,6 @@ impl GrpcServiceWrapper {
     ) -> Self {
         Self {
             orchestrator,
-            workflow_states: Arc::new(RwLock::new(HashMap::new())),
             approval_queue,
         }
     }
@@ -74,18 +69,21 @@ impl WorkflowService for GrpcServiceWrapper {
         let proto_trigger = request.into_inner();
         let trigger_id = proto_trigger.trigger_id.clone();
         
+        log::info!("Processing workflow trigger {} for up to {} tasks", 
+                   trigger_id, proto_trigger.max_tasks);
+        
         // Convert proto to core type
         let core_trigger = proto_to_core_trigger(proto_trigger);
         
-        // Process workflow using existing orchestrator
+        // Process tasks directly - no state storage needed
         let result = self.orchestrator
             .process_workflow(core_trigger)
             .await
-            .map_err(|e| Status::internal(format!("Workflow processing failed: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Task processing failed: {}", e)))?;
         
-        // Create workflow state from result
-        let workflow_state = ProtoWorkflowState {
-            workflow_id: trigger_id.clone(),
+        // Return a simple ephemeral response - not stored anywhere
+        let response = ProtoWorkflowState {
+            workflow_id: trigger_id,
             status: if result.processed {
                 workflow_grpc::workflow_state::Status::Completed as i32
             } else {
@@ -93,16 +91,19 @@ impl WorkflowService for GrpcServiceWrapper {
             },
             started_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
             updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
-            task_results: vec![], // TODO: Populate from actual results
+            task_results: vec![], // Individual approvals track their own state
             error_message: result.result.clone().filter(|_r| !result.processed),
             total_tasks: result.max_tasks,
             completed_tasks: if result.processed { result.max_tasks } else { 0 },
         };
         
-        // Store state
-        self.workflow_states.write().await.insert(trigger_id, workflow_state.clone());
+        log::info!("Trigger {} processed: {} tasks", 
+                   response.workflow_id, response.completed_tasks);
         
-        Ok(Response::new(workflow_state))
+        // No longer storing state - workflows are ephemeral
+        // Each approval tracks its own lifecycle independently
+        
+        Ok(Response::new(response))
     }
     
     async fn get_workflow_state(
@@ -111,24 +112,24 @@ impl WorkflowService for GrpcServiceWrapper {
     ) -> Result<Response<ProtoWorkflowState>, Status> {
         let workflow_id = request.into_inner().workflow_id;
         
-        log::info!("=== GET WORKFLOW STATE CALLED for ID: {} ===", workflow_id);
+        // Workflows are ephemeral - they only exist during processing
+        // Each approval tracks its own state independently
+        log::info!("get_workflow_state called for {} - workflows are ephemeral", workflow_id);
         
-        let states = self.workflow_states.read().await;
-        states.get(&workflow_id)
-            .cloned()
-            .ok_or_else(|| Status::not_found(format!("Workflow {} not found", workflow_id)))
-            .map(Response::new)
+        Err(Status::not_found(
+            "Workflows are ephemeral. Check individual approval states instead."
+        ))
     }
     
     async fn list_workflows(
         &self,
         _request: Request<ListWorkflowsRequest>,
     ) -> Result<Response<ListWorkflowsResponse>, Status> {
-        let states = self.workflow_states.read().await;
-        let workflows: Vec<ProtoWorkflowState> = states.values().cloned().collect();
+        // Workflows are ephemeral - return empty list
+        log::info!("list_workflows called - returning empty (workflows are ephemeral)");
         
         Ok(Response::new(ListWorkflowsResponse {
-            workflows,
+            workflows: vec![],
             pagination: None,
         }))
     }
@@ -141,25 +142,11 @@ impl WorkflowService for GrpcServiceWrapper {
     ) -> Result<Response<Self::StreamWorkflowUpdatesStream>, Status> {
         let workflow_id = request.into_inner().workflow_id;
         
-        // Create a channel for streaming updates
-        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        log::info!("stream_workflow_updates called for {} - not supported", workflow_id);
         
-        // Spawn task to send updates (simplified - in production, monitor actual workflow)
-        let states = self.workflow_states.clone();
-        tokio::spawn(async move {
-            // Send initial state
-            if let Some(state) = states.read().await.get(&workflow_id) {
-                let update = WorkflowUpdate {
-                    workflow_id: workflow_id.clone(),
-                    status: state.status,
-                    latest_task: None,
-                    timestamp: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
-                    message: "Current state".to_string(),
-                };
-                let _ = tx.send(Ok(update)).await;
-            }
-        });
-        
+        // Workflows are ephemeral - no updates to stream
+        // Return an empty stream that immediately closes
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
         let stream = ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(stream)))
     }
@@ -171,32 +158,26 @@ impl WorkflowService for GrpcServiceWrapper {
         let req = request.into_inner();
         let workflow_id = req.workflow_id;
         
-        // Update state to cancelled
-        let mut states = self.workflow_states.write().await;
-        if let Some(state) = states.get_mut(&workflow_id) {
-            state.status = workflow_grpc::workflow_state::Status::Failed as i32;
-            state.error_message = Some(format!("Cancelled: {}", req.reason));
-            state.updated_at = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
-            Ok(Response::new(state.clone()))
-        } else {
-            Err(Status::not_found(format!("Workflow {} not found", workflow_id)))
-        }
+        log::info!("cancel_workflow called for {} - not supported", workflow_id);
+        
+        // Workflows are ephemeral - nothing to cancel
+        Err(Status::not_found(
+            "Cannot cancel workflow. Workflows are ephemeral and run to completion."
+        ))
     }
     
     async fn get_workflow_metrics(
         &self,
         _request: Request<GetMetricsRequest>,
     ) -> Result<Response<WorkflowMetrics>, Status> {
-        let states = self.workflow_states.read().await;
+        // Calculate metrics from approval files instead
+        // This could scan the approval directories to get real metrics
+        log::info!("get_workflow_metrics called - returning zeros (workflows are ephemeral)");
         
-        let total = states.len() as u32;
-        let completed = states.values()
-            .filter(|s| s.status == workflow_grpc::workflow_state::Status::Completed as i32)
-            .count() as u32;
-        let failed = states.values()
-            .filter(|s| s.status == workflow_grpc::workflow_state::Status::Failed as i32)
-            .count() as u32;
-        let active = total - completed - failed;
+        let total = 0;
+        let completed = 0;
+        let failed = 0;
+        let active = 0;
         
         Ok(Response::new(WorkflowMetrics {
             total_workflows: total,
@@ -221,6 +202,9 @@ impl ApprovalService for GrpcServiceWrapper {
         log::info!("=== SUBMIT APPROVAL CALLED ===");
         log::info!("Received approval response for ID: {} with decision: {:?}", 
             approval_id, approval.decision());
+        if let Some(ref feedback) = approval.feedback {
+            log::info!("Feedback provided: {}", feedback);
+        }
         
         // Process the approval through the approval queue
         let result = match approval.decision() {
@@ -264,6 +248,10 @@ impl ApprovalService for GrpcServiceWrapper {
                 let decision = approval.decision();
                 let feedback = approval.feedback.unwrap_or_else(|| "No feedback provided".to_string());
                 let user_id = workflow_core::workflow::approval_types::UserId::new(approval.decided_by);
+                
+                log::info!("Processing {} for approval ID: {} with feedback: {}", 
+                    if decision == workflow_grpc::approval_response::Decision::Rejected { "rejection" } else { "revision request" },
+                    approval_id, feedback);
                 
                 // Process rejection/revision through the queue
                 match self.approval_queue.handle_user_feedback(&approval_id_typed, feedback, user_id) {

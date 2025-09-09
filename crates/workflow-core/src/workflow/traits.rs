@@ -75,4 +75,27 @@ pub trait WorkflowSteps: Send + Sync {
         file_data: Vec<u8>,
         filename: &str
     ) -> Result<()>;
+    
+    /// Generate improved letter based on feedback
+    async fn generate_improved_letter(
+        &self,
+        approval_data: &super::approval_types::ApprovalData,
+        feedback: &str
+    ) -> Result<LetterContent>;
+    
+    /// Generate PDF from letter content with mailing address
+    async fn generate_pdf_with_address(&self, letter: &LetterContent, address: &MailingAddress) -> Result<Vec<u8>>;
+    
+    /// Log that an approval update is ready for re-review
+    async fn request_approval_update(
+        &self,
+        approval_id: &str,
+        iteration_count: usize
+    ) -> Result<()>;
+    
+    /// Send improved approval to Telegram (after revision)
+    async fn send_improved_approval_to_telegram(
+        &self,
+        approval_data: &super::approval_types::ApprovalData
+    ) -> Result<()>;
 }

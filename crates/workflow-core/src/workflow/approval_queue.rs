@@ -618,6 +618,8 @@ mod tests {
             "Test Company".to_string(),
             letter,
             user_id,
+            None,  // mailing_address
+            None,  // pdf_base64
         ).unwrap();
         
         // Verify approval file was created in pending_approval directory
@@ -664,6 +666,8 @@ mod tests {
             "Get Test Company".to_string(),
             letter,
             user_id,
+            None,  // mailing_address
+            None,  // pdf_base64
         ).unwrap();
         
         // Now retrieve it
@@ -709,6 +713,8 @@ mod tests {
                 company_name: "Pending Company".to_string(),
             },
             user_id,
+            None,  // mailing_address
+            None,  // pdf_base64
         ).unwrap();
         
         let health_result = queue.health_check().unwrap();
@@ -792,6 +798,8 @@ mod tests {
                 "Test Company".to_string(),
                 letter,
                 user_id,
+                None,  // mailing_address
+                None,  // pdf_base64
             ).unwrap();
             
             // Verify it exists in first instance

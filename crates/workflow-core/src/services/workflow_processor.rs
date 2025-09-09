@@ -1,7 +1,7 @@
 //! Workflow processing service
 
 use crate::error::{LennardError, Result};
-use crate::types::{ZohoContact, LinkedInProfile, MailingAddress};
+use crate::types::{ZohoContact, LinkedInProfile, MailingAddress, PDFTemplateData};
 use crate::workflow::approval_types::{LetterContent, ApprovalId};
 use crate::clients::{ZohoClient, BaserowClient, DossierClient, DossierResult, LetterExpressClient, LetterServiceClient, PDFService, TelegramClientTrait};
 use crate::clients::zoho::Authenticated;  // Import the authenticated state
@@ -456,6 +456,99 @@ impl WorkflowSteps for WorkflowProcessor {
         self.zoho_client
             .attach_file_to_task(task_id, file_data, filename)
             .await
+    }
+    
+    async fn generate_improved_letter(
+        &self,
+        approval_data: &crate::workflow::approval_types::ApprovalData,
+        feedback: &str
+    ) -> Result<LetterContent> {
+        log::info!("Generating improved letter based on feedback for {} at {}", 
+                  approval_data.recipient_name, approval_data.company_name);
+        
+        // Use the letter service to generate an improved version with full context
+        let improved_letter = self.letter_service
+            .generate_improved_letter_with_approval(approval_data, feedback)
+            .await?;
+            
+        Ok(improved_letter)
+    }
+    
+    async fn generate_pdf_with_address(&self, letter: &LetterContent, address: &MailingAddress) -> Result<Vec<u8>> {
+        log::info!("Generating PDF for letter with subject: {}", letter.subject);
+        
+        // Create PDF template data with the actual mailing address
+        let pdf_template_data = PDFTemplateData::from_letter_and_address(letter, address);
+        
+        // Generate PDF using existing service method
+        let pdf_bytes = self.pdf_service
+            .generate_pdf_typed("letter_template.odt", &pdf_template_data)
+            .await?;
+            
+        Ok(pdf_bytes)
+    }
+    
+    async fn request_approval_update(
+        &self,
+        approval_id: &str,
+        iteration_count: usize
+    ) -> Result<()> {
+        log::info!("Approval {} ready for iteration {} review", approval_id, iteration_count);
+        
+        // The actual Telegram notification will be sent when the ApprovalWatcher
+        // processes the file from the pending_approval directory
+        log::info!(
+            "Approval {} has been improved and will be requeued for review (iteration {})",
+            approval_id, iteration_count
+        );
+        
+        Ok(())
+    }
+    
+    async fn send_improved_approval_to_telegram(
+        &self,
+        approval_data: &super::super::workflow::approval_types::ApprovalData
+    ) -> Result<()> {
+        use base64::{Engine as _, engine::general_purpose};
+        
+        log::info!("Sending improved letter to Telegram for approval {}", approval_data.approval_id);
+        
+        // Decode the PDF from base64
+        let pdf_data = approval_data.pdf_base64.as_ref()
+            .ok_or_else(|| LennardError::Workflow("Approval has no PDF data".to_string()))
+            .and_then(|base64| {
+                general_purpose::STANDARD.decode(base64)
+                    .map_err(|e| LennardError::Workflow(format!("Failed to decode PDF: {}", e)))
+            })?;
+        
+        log::info!("Decoded PDF from approval, {} bytes", pdf_data.len());
+        
+        // Create a minimal ZohoContact from approval data for the Telegram API
+        let contact = ZohoContact {
+            id: approval_data.contact_id.to_string(),
+            full_name: approval_data.recipient_name.clone(),
+            email: None,
+            phone: None,
+            company: Some(approval_data.company_name.clone()),
+            linkedin_id: None,
+            mailing_address: approval_data.mailing_address.clone(),
+        };
+        
+        // Send approval request to Telegram with PDF
+        let approval_id_str = approval_data.approval_id.to_string();
+        
+        self.telegram_client
+            .send_approval_request_with_pdf(
+                &approval_data.current_letter,
+                &contact,
+                &approval_id_str,
+                pdf_data
+            )
+            .await?;
+        
+        log::info!("Improved letter sent to Telegram for approval_id: {}", approval_id_str);
+        
+        Ok(())
     }
 }
 

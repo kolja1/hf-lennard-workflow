@@ -111,10 +111,12 @@ impl TelegramClientTrait for TelegramClient {
         // Format message text with letter preview using HTML
         let message = format!(
             "📬 <b>Neue Briefgenehmigung erforderlich</b>\n\n\
+            🔖 <b>Approval ID:</b> <code>{}</code>\n\n\
             <b>Empfänger:</b> {}\n\
             <b>Firma:</b> {}\n\
             <b>Betreff:</b> {}\n\n\
             <b>Brief:</b>\n{}\n\n{}...",
+            approval_id,
             escaped_name,
             escaped_company,
             escaped_subject,
@@ -223,10 +225,12 @@ impl TelegramClientTrait for TelegramClient {
         // Create concise caption for the PDF using HTML
         let caption = format!(
             "📬 <b>Neue Briefgenehmigung erforderlich</b>\n\n\
+            🔖 <b>Approval ID:</b> <code>{}</code>\n\n\
             <b>Empfänger:</b> {}\n\
             <b>Firma:</b> {}\n\
             <b>Betreff:</b> {}\n\n\
             Bitte prüfen Sie den angehängten Brief.",
+            approval_id,
             escaped_name,
             escaped_company,
             escaped_subject

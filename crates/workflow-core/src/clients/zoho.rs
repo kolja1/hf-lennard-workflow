@@ -322,7 +322,7 @@ impl ZohoClient<Authenticated> {
         // Parse response to verify success
         let response_text = response.text().await?;
         let response_json: serde_json::Value = serde_json::from_str(&response_text)
-            .map_err(|e| LennardError::Json(e))?;
+            .map_err(LennardError::Json)?;
             
         // Check if the response indicates success
         if let Some(data) = response_json.get("data").and_then(|d| d.as_array()) {

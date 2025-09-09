@@ -7,7 +7,7 @@ mod grpc_service;
 use clap::{Arg, Command};
 use workflow_core::{
     LennardConfig, 
-    workflow::{WorkflowOrchestrator, ApprovalWatcher, approval_types::WorkflowTrigger}, 
+    workflow::{WorkflowOrchestrator, ApprovalWatcher, NeedsImprovementWatcher, approval_types::WorkflowTrigger}, 
     services::WorkflowProcessor,
     clients::{BaserowClient, ZohoClient, DossierClient, LetterExpressClient, LetterServiceClient, PDFService, TelegramClient},
     services::AddressExtractor,
@@ -201,18 +201,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         
         log::info!("Starting gRPC server on port {}", port);
         
-        // Start gRPC server, workflow monitor, and approval watcher in parallel
+        // Start gRPC server, workflow monitor, approval watcher, and needs improvement watcher in parallel
         let orchestrator_grpc = orchestrator.clone();
         let orchestrator_monitor = orchestrator.clone();
-        let orchestrator_watcher = orchestrator.clone();
+        let orchestrator_approval_watcher = orchestrator.clone();
+        let orchestrator_improvement_watcher = orchestrator.clone();
         
         let approval_queue_grpc = approval_queue.clone();
-        let approval_queue_watcher = approval_queue.clone();
+        let approval_queue_approval_watcher = approval_queue.clone();
         
         // Create approval watcher
         let approval_watcher = Arc::new(ApprovalWatcher::new(
-            approval_queue_watcher,
-            orchestrator_watcher,
+            approval_queue_approval_watcher,
+            orchestrator_approval_watcher,
+        ));
+        
+        // Create needs improvement watcher
+        let needs_improvement_watcher = Arc::new(NeedsImprovementWatcher::new(
+            orchestrator_improvement_watcher,
         ));
         
         let grpc_handle = tokio::spawn(async move {
@@ -223,8 +229,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             monitor_workflows(orchestrator_monitor).await
         });
         
-        let watcher_handle = tokio::spawn(async move {
+        let approval_watcher_handle = tokio::spawn(async move {
             approval_watcher.start().await;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+        
+        let improvement_watcher_handle = tokio::spawn(async move {
+            needs_improvement_watcher.start().await;
             Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
         });
         
@@ -256,7 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
             }
-            result = watcher_handle => {
+            result = approval_watcher_handle => {
                 match result {
                     Ok(Ok(_)) => log::info!("Approval watcher exited normally"),
                     Ok(Err(e)) => {
@@ -265,6 +276,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     Err(e) => {
                         log::error!("Approval watcher task panicked: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            result = improvement_watcher_handle => {
+                match result {
+                    Ok(Ok(_)) => log::info!("Needs improvement watcher exited normally"),
+                    Ok(Err(e)) => {
+                        log::error!("Needs improvement watcher failed: {}", e);
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        log::error!("Needs improvement watcher task panicked: {}", e);
                         std::process::exit(1);
                     }
                 }
@@ -306,11 +330,9 @@ async fn monitor_workflows(orchestrator: Arc<WorkflowOrchestrator<WorkflowProces
     
     // Process existing files first
     if let Ok(entries) = std::fs::read_dir(&triggers_path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                if entry.path().is_file() {
-                    process_trigger_file(&orchestrator, &entry.path(), &processed_path).await?;
-                }
+        for entry in entries.flatten() {
+            if entry.path().is_file() {
+                process_trigger_file(&orchestrator, &entry.path(), &processed_path).await?;
             }
         }
     }

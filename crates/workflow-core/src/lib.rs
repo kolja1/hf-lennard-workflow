@@ -33,13 +33,9 @@ pub use services::{
 
 // Re-export workflow types
 pub use workflow::{
-    WorkflowState,
-    WorkflowData,
-    LegacyApprovalData,
-    // New strongly typed approval system
+    // Strongly typed approval system
     ApprovalQueue,
     ApprovalId,
-    WorkflowId,
     TaskId,
     ContactId,
     UserId,
