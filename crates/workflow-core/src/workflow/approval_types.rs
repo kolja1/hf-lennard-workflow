@@ -177,6 +177,8 @@ pub struct ApprovalData {
     pub contact_id: ContactId,
     pub state: ApprovalState,
     pub recipient_name: String,
+    pub recipient_email: Option<String>,
+    pub recipient_title: Option<String>,
     pub company_name: String,
     pub current_letter: LetterContent,
     pub letter_history: Vec<LetterHistoryEntry>,
@@ -190,6 +192,18 @@ pub struct ApprovalData {
     /// Base64-encoded PDF data (generated before approval request)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pdf_base64: Option<String>,
+    /// Personal dossier content (LinkedIn profile, background, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person_dossier: Option<String>,
+    /// Company dossier content (company research, industry info, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub company_dossier: Option<String>,
+    /// Industry information
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub industry: Option<String>,
+    /// Company website
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
 }
 
 impl ApprovalData {
@@ -218,6 +232,8 @@ impl ApprovalData {
             contact_id,
             state: ApprovalState::PendingApproval,
             recipient_name,
+            recipient_email: None,
+            recipient_title: None,
             company_name,
             current_letter: letter,
             letter_history: vec![first_entry],
@@ -228,6 +244,10 @@ impl ApprovalData {
             updated_at: now,
             mailing_address: None,
             pdf_base64: None,
+            person_dossier: None,
+            company_dossier: None,
+            industry: None,
+            website: None,
         }
     }
     

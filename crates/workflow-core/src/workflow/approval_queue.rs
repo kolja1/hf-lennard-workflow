@@ -110,11 +110,17 @@ impl ApprovalQueue {
         task_id: TaskId,
         contact_id: ContactId,
         recipient_name: String,
+        recipient_email: Option<String>,
+        recipient_title: Option<String>,
         company_name: String,
         letter: LetterContent,
         requested_by: UserId,
         mailing_address: Option<crate::types::MailingAddress>,
         pdf_base64: Option<String>,
+        person_dossier: Option<String>,
+        company_dossier: Option<String>,
+        industry: Option<String>,
+        website: Option<String>,
     ) -> Result<ApprovalId> {
         let mut approval = ApprovalData::new(
             task_id,
@@ -126,8 +132,14 @@ impl ApprovalQueue {
         );
         
         // Add the additional fields
+        approval.recipient_email = recipient_email;
+        approval.recipient_title = recipient_title;
         approval.mailing_address = mailing_address;
         approval.pdf_base64 = pdf_base64;
+        approval.person_dossier = person_dossier;
+        approval.company_dossier = company_dossier;
+        approval.industry = industry;
+        approval.website = website;
         
         let approval_id = approval.approval_id.clone();
         let path = self.get_approval_path(ApprovalState::PendingApproval, &approval_id);

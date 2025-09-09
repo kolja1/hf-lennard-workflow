@@ -16,6 +16,7 @@ use chrono::Utc;
 /// Result from dossier generation containing structured data
 #[derive(Debug, Clone)]
 pub struct DossierResult {
+    pub person_dossier_content: String,
     pub company_dossier_content: String,
     pub company_name: String,
     pub mailing_address: Option<MailingAddress>,
@@ -94,6 +95,10 @@ impl DossierClient {
                                     let company_dossier = bundle.company_dossier
                                         .ok_or_else(|| LennardError::Processing("No company dossier in response".to_string()))?;
                                     
+                                    // Extract data from person dossier
+                                    let person_dossier = bundle.person_dossier
+                                        .ok_or_else(|| LennardError::Processing("No person dossier in response".to_string()))?;
+                                    
                                     log::info!("Extracted company name: {}", company_dossier.company_name);
                                     
                                     // Convert gRPC address to our domain type
@@ -110,6 +115,7 @@ impl DossierClient {
                                     }
                                     
                                     Ok(DossierResult {
+                                        person_dossier_content: person_dossier.content,
                                         company_dossier_content: company_dossier.content,
                                         company_name: company_dossier.company_name,
                                         mailing_address,

@@ -78,9 +78,9 @@ impl LetterServiceClient {
             website: String::new(),  // Could be extracted from profile data
         };
         
-        // Build dossier content
+        // Build dossier content with BOTH personal and company dossiers
         let dossier_content = DossierContent {
-            person_dossier: String::new(), // We could add person dossier if available
+            person_dossier: dossier_result.person_dossier_content.clone(),
             company_dossier: dossier_result.company_dossier_content.clone(),
         };
         
@@ -96,6 +96,12 @@ impl LetterServiceClient {
         
         // Send the gRPC request
         log::info!("Sending letter generation request for {}", contact.full_name);
+        log::info!("Letter generation details - Name: {}, Company: {}", 
+                  contact.full_name, 
+                  dossier_result.company_name);
+        log::info!("Dossiers included - Person: {} chars, Company: {} chars",
+                  dossier_result.person_dossier_content.len(),
+                  dossier_result.company_dossier_content.len());
         let response = grpc_client
             .generate_letter(request)
             .await
@@ -186,8 +192,8 @@ impl LetterServiceClient {
                 first_name: "".to_string(), // Not needed when full_name is provided
                 last_name: "".to_string(),  // Not needed when full_name is provided
                 full_name: approval_data.recipient_name.clone(),
-                email: "".to_string(), // Email not available in ApprovalData
-                title: "".to_string(), // Title not available in ApprovalData
+                email: approval_data.recipient_email.clone().unwrap_or_default(),
+                title: approval_data.recipient_title.clone().unwrap_or_default(),
                 account_name: approval_data.company_name.clone(),
                 mailing_street: mailing_address.street.clone(),
                 mailing_city: mailing_address.city.clone(),
@@ -196,15 +202,26 @@ impl LetterServiceClient {
             }),
             company_info: Some(CompanyInfo {
                 account_name: approval_data.company_name.clone(),
-                industry: "".to_string(), // Industry not available in ApprovalData
-                website: "".to_string(), // Website not available in ApprovalData
+                industry: approval_data.industry.clone().unwrap_or_default(),
+                website: approval_data.website.clone().unwrap_or_default(),
             }),
-            our_company_info: "Lennard Company".to_string(),
+            our_company_info: "HEIN+FRICKE GmbH & Co.KG - Führender IT-Dienstleister".to_string(),
             letter_type: "improvement".to_string(),
-            dossier_content: None, // Original dossier not stored in ApprovalData
+            dossier_content: Some(DossierContent {
+                person_dossier: approval_data.person_dossier.clone().unwrap_or_default(),
+                company_dossier: approval_data.company_dossier.clone().unwrap_or_default(),
+            })
         });
         
         log::info!("Sending improvement request to gRPC service with feedback and full context");
+        log::info!("Improvement request details - Name: {}, Email: {:?}, Title: {:?}, Company: {}", 
+                  approval_data.recipient_name, 
+                  approval_data.recipient_email,
+                  approval_data.recipient_title,
+                  approval_data.company_name);
+        log::info!("Dossiers included - Person: {} chars, Company: {} chars",
+                  approval_data.person_dossier.as_ref().map(|d| d.len()).unwrap_or(0),
+                  approval_data.company_dossier.as_ref().map(|d| d.len()).unwrap_or(0));
         
         // Call the gRPC service
         let response = grpc_client

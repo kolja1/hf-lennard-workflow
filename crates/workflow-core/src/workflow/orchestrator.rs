@@ -161,7 +161,7 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         log::info!("Step 4: Generated letter with subject '{}'", letter.subject);
         
         // Step 5a: Start approval - creates and persists the approval request
-        let approval_id = match self.steps.approval_start(&task.id, &contact, &letter).await {
+        let approval_id = match self.steps.approval_start(&task.id, &contact, &letter, &dossier_result).await {
             Ok(id) => id,
             Err(e) => {
                 let error = LennardError::Workflow(format!("Step 5a (approval start) failed: {}", e));
@@ -450,8 +450,8 @@ mod tests {
                 return Err(LennardError::ServiceUnavailable("Dossier generation failed".to_string()));
             }
             Ok(crate::clients::DossierResult {
-                person_dossier: "Mock person dossier content".to_string(),
-                company_dossier: "Mock company dossier content".to_string(),
+                person_dossier_content: "Mock person dossier content".to_string(),
+                company_dossier_content: "Mock company dossier content".to_string(),
                 company_name: "Mock Company".to_string(),
                 mailing_address: Some(crate::types::MailingAddress {
                     street: "123 Mock Street".to_string(),
@@ -478,7 +478,7 @@ mod tests {
             })
         }
         
-        async fn approval_start(&self, _task_id: &str, _contact: &ZohoContact, _letter: &LetterContent) -> Result<ApprovalId> {
+        async fn approval_start(&self, _task_id: &str, _contact: &ZohoContact, _letter: &LetterContent, _dossier: &DossierResult) -> Result<ApprovalId> {
             if self.should_fail_at_step == Some("approval_start") {
                 return Err(LennardError::ServiceUnavailable("Approval start failed".to_string()));
             }

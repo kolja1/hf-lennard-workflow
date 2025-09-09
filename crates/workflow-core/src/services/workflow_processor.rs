@@ -207,7 +207,7 @@ impl WorkflowSteps for WorkflowProcessor {
         self.letter_service.generate_letter(contact, profile, dossier).await
     }
     
-    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, letter: &LetterContent) -> Result<ApprovalId> {
+    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, letter: &LetterContent, dossier: &DossierResult) -> Result<ApprovalId> {
         use crate::workflow::approval_types::{TaskId, ContactId, UserId};
         use crate::types::PDFTemplateData;
         use base64::{Engine as _, engine::general_purpose};
@@ -236,19 +236,62 @@ impl WorkflowSteps for WorkflowProcessor {
         let contact_id = ContactId::new(contact.id.clone());
         let user_id = UserId::new(1); // TODO: Get actual user ID from context
         
-        // Extract company name from contact
-        let company_name = contact.company.clone().unwrap_or_else(|| "Unknown Company".to_string());
+        // Use company name from dossier (more reliable than contact.company)
+        let company_name = dossier.company_name.clone();
+        
+        // Extract email and title from person dossier
+        let mut recipient_email = None;
+        let mut recipient_title = None;
+        
+        // Parse the person dossier to extract email and title
+        let person_dossier = &dossier.person_dossier_content;
+        for line in person_dossier.lines() {
+            if line.starts_with("**Email**:") || line.starts_with("**Email**: ") {
+                recipient_email = Some(line.replace("**Email**:", "").replace("**Email**: ", "").trim().to_string());
+            } else if line.starts_with("**Headline**:") || line.starts_with("**Headline**: ") {
+                recipient_title = Some(line.replace("**Headline**:", "").replace("**Headline**: ", "").trim().to_string());
+            }
+        }
+        
+        // Extract industry and website from company dossier if available
+        let mut industry = None;
+        let mut website = None;
+        
+        let company_dossier = &dossier.company_dossier_content;
+        for line in company_dossier.lines() {
+            if line.starts_with("- **Industry**:") || line.starts_with("- **Industry**: ") {
+                industry = Some(line.replace("- **Industry**:", "").replace("- **Industry**: ", "").trim().to_string());
+            } else if line.starts_with("- **Website**:") || line.starts_with("- **Website**: ") {
+                // Extract URL from markdown link if present
+                if let Some(start) = line.find('[') {
+                    if let Some(end) = line.find("](") {
+                        website = Some(line[start+1..end].to_string());
+                    }
+                } else {
+                    website = Some(line.replace("- **Website**:", "").replace("- **Website**: ", "").trim().to_string());
+                }
+            }
+        }
+        
+        log::info!("Extracted metadata - Email: {:?}, Title: {:?}, Industry: {:?}, Website: {:?}", 
+                  recipient_email, recipient_title, industry, website);
         
         // Create and persist the approval request with all necessary data
         let approval_id = self.approval_queue.create_approval(
             task_id,
             contact_id,
             contact.full_name.clone(),
+            recipient_email,
+            recipient_title,
             company_name,
             letter.clone(),
             user_id,
             Some(mailing_address.clone()),
             Some(general_purpose::STANDARD.encode(&pdf_data)),
+            Some(dossier.person_dossier_content.clone()),
+            Some(dossier.company_dossier_content.clone()),
+            industry,
+            website,
         )?;
         
         log::info!("Created approval with ID: {} (includes mailing address and PDF)", approval_id);
