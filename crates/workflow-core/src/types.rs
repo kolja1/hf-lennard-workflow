@@ -37,6 +37,17 @@ pub struct MailingAddress {
     pub country: String,
 }
 
+impl MailingAddress {
+    /// Validates that the address contains actual data, not just empty strings
+    pub fn is_valid(&self) -> bool {
+        // Check that critical fields are not empty or just whitespace
+        !self.street.trim().is_empty() &&
+        !self.city.trim().is_empty() &&
+        !self.postal_code.trim().is_empty() &&
+        !self.country.trim().is_empty()
+    }
+}
+
 // ZohoTask removed - using generated TasksResponse from zoho-generated-types instead
 
 /// Generated letter content
@@ -165,7 +176,108 @@ pub enum ShippingType {
 
 
 mod tests {
+    use super::*;
 
+    // MailingAddress validation tests
+    #[test]
+    fn test_valid_address() {
+        let address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "Berlin".to_string(),
+            state: Some("BE".to_string()),
+            postal_code: "10115".to_string(),
+            country: "Germany".to_string(),
+        };
+        assert!(address.is_valid());
+    }
+
+    #[test]
+    fn test_empty_street_invalid() {
+        let address = MailingAddress {
+            street: "".to_string(),
+            city: "Berlin".to_string(),
+            state: Some("BE".to_string()),
+            postal_code: "10115".to_string(),
+            country: "Germany".to_string(),
+        };
+        assert!(!address.is_valid());
+    }
+
+    #[test]
+    fn test_empty_city_invalid() {
+        let address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "".to_string(),
+            state: Some("BE".to_string()),
+            postal_code: "10115".to_string(),
+            country: "Germany".to_string(),
+        };
+        assert!(!address.is_valid());
+    }
+
+    #[test]
+    fn test_empty_postal_code_invalid() {
+        let address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "Berlin".to_string(),
+            state: Some("BE".to_string()),
+            postal_code: "".to_string(),
+            country: "Germany".to_string(),
+        };
+        assert!(!address.is_valid());
+    }
+
+    #[test]
+    fn test_empty_country_invalid() {
+        let address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "Berlin".to_string(),
+            state: Some("BE".to_string()),
+            postal_code: "10115".to_string(),
+            country: "".to_string(),
+        };
+        assert!(!address.is_valid());
+    }
+
+    #[test]
+    fn test_whitespace_only_fields_invalid() {
+        let address = MailingAddress {
+            street: "   ".to_string(),
+            city: "\t\n".to_string(),
+            state: Some("BE".to_string()),
+            postal_code: "  ".to_string(),
+            country: " ".to_string(),
+        };
+        assert!(!address.is_valid());
+    }
+
+    #[test]
+    fn test_all_empty_fields_invalid() {
+        // This simulates the bug from approval d70c7afa-ee82-4060-8515-f5bdec8ca5bc
+        let address = MailingAddress {
+            street: "".to_string(),
+            city: "".to_string(),
+            state: Some("".to_string()),
+            postal_code: "".to_string(),
+            country: "".to_string(),
+        };
+        assert!(!address.is_valid());
+    }
+
+    #[test]
+    fn test_state_field_optional() {
+        // State field should be optional and not affect validation
+        let address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "Berlin".to_string(),
+            state: None,
+            postal_code: "10115".to_string(),
+            country: "Germany".to_string(),
+        };
+        assert!(address.is_valid());
+    }
+
+    // PDFBookmarks tests
     #[test]
     fn test_pdf_bookmarks_constants() {
         use super::PDFBookmarks;
@@ -311,5 +423,108 @@ mod tests {
         
         // Street-2 should be None when state is None
         assert_eq!(pdf_data.street_2, None);
+    }
+
+    #[test]
+    fn test_mailing_address_validation_empty_fields() {
+        use super::MailingAddress;
+        
+        // Test the problematic scenario from approval d70c7afa-ee82-4060-8515-f5bdec8ca5bc
+        let empty_address = MailingAddress {
+            street: "".to_string(),
+            city: "".to_string(),
+            state: Some("".to_string()),
+            postal_code: "".to_string(),
+            country: "".to_string(),
+        };
+        
+        assert!(!empty_address.is_valid(), "Empty address should be invalid");
+    }
+    
+    #[test]
+    fn test_mailing_address_validation_whitespace_fields() {
+        use super::MailingAddress;
+        
+        // Test whitespace-only fields
+        let whitespace_address = MailingAddress {
+            street: "   ".to_string(),
+            city: "\t\n".to_string(),
+            state: Some(" ".to_string()),
+            postal_code: "  ".to_string(),
+            country: "\n\t ".to_string(),
+        };
+        
+        assert!(!whitespace_address.is_valid(), "Whitespace-only address should be invalid");
+    }
+    
+    #[test]
+    fn test_mailing_address_validation_mixed_empty_valid() {
+        use super::MailingAddress;
+        
+        // Test partially empty fields
+        let partial_address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "".to_string(), // Empty city should make it invalid
+            state: Some("CA".to_string()),
+            postal_code: "12345".to_string(),
+            country: "USA".to_string(),
+        };
+        
+        assert!(!partial_address.is_valid(), "Address with empty city should be invalid");
+    }
+    
+    #[test]
+    fn test_mailing_address_validation_valid_address() {
+        use super::MailingAddress;
+        
+        // Test valid address
+        let valid_address = MailingAddress {
+            street: "123 Main St".to_string(),
+            city: "San Francisco".to_string(),
+            state: Some("CA".to_string()),
+            postal_code: "94102".to_string(),
+            country: "USA".to_string(),
+        };
+        
+        assert!(valid_address.is_valid(), "Valid address should pass validation");
+    }
+    
+    #[test]
+    fn test_mailing_address_validation_valid_without_state() {
+        use super::MailingAddress;
+        
+        // Test valid address without state (some countries don't have states)
+        let valid_address_no_state = MailingAddress {
+            street: "10 Downing Street".to_string(),
+            city: "London".to_string(),
+            state: None, // State is optional
+            postal_code: "SW1A 2AA".to_string(),
+            country: "United Kingdom".to_string(),
+        };
+        
+        assert!(valid_address_no_state.is_valid(), "Valid address without state should pass validation");
+    }
+
+    #[test]
+    fn test_mailing_address_json_deserialization_empty() {
+        use super::MailingAddress;
+        
+        // Test JSON deserialization of empty fields (simulates the real-world scenario)
+        let empty_address_json = r#"{
+            "street": "",
+            "city": "",
+            "state": "",
+            "postal_code": "",
+            "country": ""
+        }"#;
+        
+        let address: MailingAddress = serde_json::from_str(empty_address_json)
+            .expect("Should deserialize successfully");
+        
+        assert!(!address.is_valid(), "Deserialized empty address should be invalid");
+        assert_eq!(address.street, "");
+        assert_eq!(address.city, "");
+        assert_eq!(address.postal_code, "");
+        assert_eq!(address.country, "");
     }
 }

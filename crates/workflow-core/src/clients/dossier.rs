@@ -101,17 +101,29 @@ impl DossierClient {
                                     
                                     log::info!("Extracted company name: {}", company_dossier.company_name);
                                     
-                                    // Convert gRPC address to our domain type
-                                    let mailing_address = company_dossier.mailing_address.map(|addr| MailingAddress {
-                                        street: addr.street,
-                                        city: addr.city,
-                                        state: Some(addr.state),
-                                        postal_code: addr.postal_code,
-                                        country: addr.country,
+                                    // Convert gRPC address to our domain type, but only if it's valid
+                                    let mailing_address = company_dossier.mailing_address.and_then(|addr| {
+                                        let address = MailingAddress {
+                                            street: addr.street,
+                                            city: addr.city,
+                                            state: Some(addr.state),
+                                            postal_code: addr.postal_code,
+                                            country: addr.country,
+                                        };
+                                        
+                                        // Only return Some if the address contains actual data
+                                        if address.is_valid() {
+                                            Some(address)
+                                        } else {
+                                            log::warn!("Extracted address has empty fields, treating as None");
+                                            None
+                                        }
                                     });
                                     
                                     if mailing_address.is_some() {
-                                        log::info!("Address extraction successful");
+                                        log::info!("Address extraction successful with valid data");
+                                    } else {
+                                        log::warn!("No valid address could be extracted from company dossier");
                                     }
                                     
                                     Ok(DossierResult {

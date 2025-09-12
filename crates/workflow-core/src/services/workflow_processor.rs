@@ -220,6 +220,14 @@ impl WorkflowSteps for WorkflowProcessor {
                 format!("Contact {} has no mailing address", contact.full_name)
             ))?;
         
+        // Validate the address contains actual data
+        if !mailing_address.is_valid() {
+            return Err(LennardError::Workflow(format!(
+                "Contact {} has invalid mailing address with empty fields. Cannot generate PDF without valid recipient address.",
+                contact.full_name
+            )));
+        }
+        
         // Generate PDF now so it's included in the approval
         log::info!("Generating PDF for approval");
         let pdf_template_data = PDFTemplateData::from_letter_and_address(letter, mailing_address);
@@ -349,6 +357,14 @@ impl WorkflowSteps for WorkflowProcessor {
             .ok_or_else(|| LennardError::Workflow(
                 format!("Contact {} has no mailing address. Address must be extracted from company dossier first.", contact.full_name)
             ))?;
+        
+        // Validate the address contains actual data
+        if !recipient_address.is_valid() {
+            return Err(LennardError::Workflow(format!(
+                "Contact {} has invalid mailing address with empty fields. Cannot send PDF without valid recipient address.",
+                contact.full_name
+            )));
+        }
         
         // Create strongly typed PDF data
         let pdf_template_data = PDFTemplateData::from_letter_and_address(letter, recipient_address);

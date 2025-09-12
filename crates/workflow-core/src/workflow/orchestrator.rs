@@ -146,11 +146,34 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         // Step 3.5: Update contact with extracted address if missing
         if contact.mailing_address.is_none() {
             if let Some(address) = dossier_result.mailing_address.clone() {
-                log::info!("Step 3.5: Extracted mailing address for {}", contact.full_name);
-                // Update the local contact object with the extracted address
-                contact.mailing_address = Some(address.clone());
-                // Also update Zoho contact with address for persistence
-                self.steps.update_contact_address(&contact.id, &address).await?;
+                // Double-check the address is valid before using it
+                if address.is_valid() {
+                    log::info!("Step 3.5: Extracted valid mailing address for {}", contact.full_name);
+                    // Update the local contact object with the extracted address
+                    contact.mailing_address = Some(address.clone());
+                    // Also update Zoho contact with address for persistence
+                    self.steps.update_contact_address(&contact.id, &address).await?;
+                } else {
+                    return Err(LennardError::Workflow(format!(
+                        "Extracted address for {} is invalid (empty fields). Cannot proceed without valid recipient address.",
+                        contact.full_name
+                    )));
+                }
+            } else {
+                return Err(LennardError::Workflow(format!(
+                    "Failed to extract mailing address for {}. Cannot proceed without recipient address. Please verify the company website is accessible.",
+                    contact.full_name
+                )));
+            }
+        } else {
+            // Validate existing address
+            if let Some(ref addr) = contact.mailing_address {
+                if !addr.is_valid() {
+                    return Err(LennardError::Workflow(format!(
+                        "Contact {} has invalid mailing address (empty fields). Cannot proceed.",
+                        contact.full_name
+                    )));
+                }
             }
         }
         

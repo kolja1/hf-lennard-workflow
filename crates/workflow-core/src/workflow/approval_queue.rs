@@ -627,11 +627,17 @@ mod tests {
             task_id,
             contact_id,
             "John Doe".to_string(),
+            None,  // recipient_email
+            None,  // recipient_title
             "Test Company".to_string(),
             letter,
             user_id,
             None,  // mailing_address
             None,  // pdf_base64
+            None,  // person_dossier
+            None,  // company_dossier
+            None,  // industry
+            None,  // website
         ).unwrap();
         
         // Verify approval file was created in pending_approval directory
@@ -675,11 +681,17 @@ mod tests {
             task_id,
             contact_id,
             "Jane Smith".to_string(),
+            None,  // recipient_email
+            None,  // recipient_title
             "Get Test Company".to_string(),
             letter,
             user_id,
             None,  // mailing_address
             None,  // pdf_base64
+            None,  // person_dossier
+            None,  // company_dossier
+            None,  // industry
+            None,  // website
         ).unwrap();
         
         // Now retrieve it
@@ -715,6 +727,8 @@ mod tests {
             TaskId::new("pending-task".to_string()),
             ContactId::new("pending-contact".to_string()),
             "Pending Person".to_string(),
+            None,  // recipient_email
+            None,  // recipient_title
             "Pending Company".to_string(),
             LetterContent {
                 subject: "Pending Subject".to_string(),
@@ -727,6 +741,10 @@ mod tests {
             user_id,
             None,  // mailing_address
             None,  // pdf_base64
+            None,  // person_dossier
+            None,  // company_dossier
+            None,  // industry
+            None,  // website
         ).unwrap();
         
         let health_result = queue.health_check().unwrap();
@@ -807,11 +825,17 @@ mod tests {
                 task_id,
                 contact_id,
                 "Test Person".to_string(),
+                None,  // recipient_email
+                None,  // recipient_title
                 "Test Company".to_string(),
                 letter,
                 user_id,
                 None,  // mailing_address
                 None,  // pdf_base64
+                None,  // person_dossier
+                None,  // company_dossier
+                None,  // industry
+                None,  // website
             ).unwrap();
             
             // Verify it exists in first instance
