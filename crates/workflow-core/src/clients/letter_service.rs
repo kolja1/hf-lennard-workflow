@@ -9,7 +9,6 @@ use letter_grpc_client::{
     GenerateLetterRequest,
     GenerateLetterWithApprovalRequest,
     RecipientInfo,
-    CompanyInfo,
     DossierContent,
     ApprovalData,
     LetterHistoryEntry,
@@ -71,13 +70,6 @@ impl LetterServiceClient {
                 .unwrap_or_default(),
         };
         
-        // Build company info from dossier result
-        let company_info = CompanyInfo {
-            account_name: dossier_result.company_name.clone(),
-            industry: String::new(), // Could be extracted from dossier if available
-            website: String::new(),  // Could be extracted from profile data
-        };
-        
         // Build dossier content with BOTH personal and company dossiers
         let dossier_content = DossierContent {
             person_dossier: dossier_result.person_dossier_content.clone(),
@@ -87,7 +79,6 @@ impl LetterServiceClient {
         // Create the request
         let request = GenerateLetterRequest {
             recipient_info: Some(recipient_info),
-            company_info: Some(company_info),
             our_company_info: "HEIN+FRICKE GmbH & Co.KG - Führender IT-Dienstleister".to_string(),
             feedback_history: vec![],
             letter_type: "sales_introduction".to_string(),
@@ -199,11 +190,6 @@ impl LetterServiceClient {
                 mailing_city: mailing_address.city.clone(),
                 mailing_zip: mailing_address.postal_code.clone(),
                 mailing_country: mailing_address.country.clone(),
-            }),
-            company_info: Some(CompanyInfo {
-                account_name: approval_data.company_name.clone(),
-                industry: approval_data.industry.clone().unwrap_or_default(),
-                website: approval_data.website.clone().unwrap_or_default(),
             }),
             our_company_info: "HEIN+FRICKE GmbH & Co.KG - Führender IT-Dienstleister".to_string(),
             letter_type: "improvement".to_string(),

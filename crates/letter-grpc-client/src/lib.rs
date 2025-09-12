@@ -12,7 +12,6 @@ pub use letter_generation::{
     GenerateLetterResponse,
     GenerateLetterWithApprovalRequest,
     RecipientInfo,
-    CompanyInfo,
     DossierContent,
     LetterContent,
     ApprovalData,
