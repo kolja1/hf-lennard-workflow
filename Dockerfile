@@ -24,14 +24,19 @@ RUN cargo build --release --bin workflow-server
 # Runtime stage
 FROM debian:bookworm-slim
 
+# Accept UID and GID as build arguments (default to 1000 for backwards compatibility)
+ARG UID=1000
+ARG GID=1000
+
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -u 1000 -s /bin/bash workflow
+# Create non-root user with configurable UID/GID
+RUN groupadd -g ${GID} workflow && \
+    useradd -m -u ${UID} -g ${GID} -s /bin/bash workflow
 
 # Create base directories only - let the app create its own structure
 RUN mkdir -p /data /app/config \
