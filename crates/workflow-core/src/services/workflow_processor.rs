@@ -405,7 +405,7 @@ impl WorkflowSteps for WorkflowProcessor {
             recipient_address: recipient_address.clone(),
             sender_address,
             color: PrintColor::Color,
-            mode: PrintMode::Duplex,
+            mode: PrintMode::Simplex,
             shipping: ShippingType::Standard,
         };
         
