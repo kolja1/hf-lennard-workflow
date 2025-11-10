@@ -487,10 +487,10 @@ impl WorkflowSteps for WorkflowProcessor {
         task_id: &str,
         error_message: &str
     ) -> Result<()> {
-        // Update Zoho task status to "Warten auf Andere" (Waiting for Others)
+        // Update Zoho task status to "Waiting for others" (English status in Zoho)
         let error_description = format!("Workflow failed: {}", error_message);
         self.zoho_client
-            .update_task_status(task_id, "Warten auf Andere", &error_description)
+            .update_task_status(task_id, "Waiting for others", &error_description)
             .await
     }
     
@@ -499,9 +499,9 @@ impl WorkflowSteps for WorkflowProcessor {
         task_id: &str,
         success_message: &str
     ) -> Result<()> {
-        // Update Zoho task status to "Abgeschlossen" (Completed)
+        // Update Zoho task status to "Done" (English status in Zoho)
         self.zoho_client
-            .update_task_status(task_id, "Abgeschlossen", success_message)
+            .update_task_status(task_id, "Done", success_message)
             .await
     }
     
@@ -618,13 +618,13 @@ mod tests {
     #[test]
     fn test_zoho_filter_constants() {
         // Verify that the filter constants have the correct values
-        assert_eq!(TASK_SUBJECT_FILTER, "Connect on LinkedIn", 
+        assert_eq!(TASK_SUBJECT_FILTER, "Connect on LinkedIn",
             "Subject filter must be 'Connect on LinkedIn' with capital I");
-        
-        assert_eq!(TASK_STATUS_FILTER, "Nicht gestartet", 
-            "Status filter must be in German: 'Nicht gestartet'");
-        
-        assert_eq!(TASK_OWNER_ID, "1294764000001730350", 
+
+        assert_eq!(TASK_STATUS_FILTER, "Not started",
+            "Status filter must be in English: 'Not started'");
+
+        assert_eq!(TASK_OWNER_ID, "1294764000001730350",
             "Owner ID must be Lennard's Zoho user ID");
     }
 
@@ -639,12 +639,12 @@ mod tests {
 
         // Verify the filter structure and values
         assert_eq!(filters.len(), 3, "Must have exactly 3 filters");
-        
+
         assert_eq!(filters[0], ("Subject", "Connect on LinkedIn"),
             "First filter must be Subject='Connect on LinkedIn'");
-        
-        assert_eq!(filters[1], ("Status", "Nicht gestartet"),
-            "Second filter must be Status='Nicht gestartet' (German)");
+
+        assert_eq!(filters[1], ("Status", "Not started"),
+            "Second filter must be Status='Not started' (English)");
         
         assert_eq!(filters[2], ("Owner", "1294764000001730350"),
             "Third filter must be Owner with Lennard's ID");

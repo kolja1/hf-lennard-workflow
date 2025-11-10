@@ -367,7 +367,7 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
             log::error!("Failed to update Zoho task status to completed: {}", e);
             // Don't fail the whole workflow if status update fails
         } else {
-            log::info!("Updated Zoho task {} status to 'Abgeschlossen'", task_id);
+            log::info!("Updated Zoho task {} status to 'Done'", task_id);
         }
         
         Ok(format!("Letter sent successfully after approval, tracking: {}", tracking_id))
