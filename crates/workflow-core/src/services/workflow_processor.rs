@@ -13,7 +13,7 @@ use zoho_generated_types::TasksResponse;
 
 // Constants for Zoho task filters
 const TASK_SUBJECT_FILTER: &str = "Connect on LinkedIn";
-const TASK_STATUS_FILTER: &str = "Nicht gestartet";  // German: "Not started"
+const TASK_STATUS_FILTER: &str = "Not started";  // English status in Zoho
 const TASK_OWNER_ID: &str = "1294764000001730350";   // Lennard's Zoho user ID
 
 pub struct WorkflowProcessor {
@@ -404,7 +404,7 @@ impl WorkflowSteps for WorkflowProcessor {
             pdf_data,
             recipient_address: recipient_address.clone(),
             sender_address,
-            color: PrintColor::Color,
+            color: PrintColor::BlackWhite,
             mode: PrintMode::Simplex,
             shipping: ShippingType::Standard,
         };
