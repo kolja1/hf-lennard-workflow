@@ -207,19 +207,19 @@ impl WorkflowSteps for WorkflowProcessor {
         self.letter_service.generate_letter(contact, profile, dossier).await
     }
     
-    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, letter: &LetterContent, dossier: &DossierResult) -> Result<ApprovalId> {
+    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, profile: &LinkedInProfile, letter: &LetterContent, dossier: &DossierResult) -> Result<ApprovalId> {
         use crate::workflow::approval_types::{TaskId, ContactId, UserId};
         use crate::types::PDFTemplateData;
         use base64::{Engine as _, engine::general_purpose};
-        
+
         log::info!("Starting approval for task {} and contact {}", task_id, contact.full_name);
-        
+
         // Get mailing address - REQUIRED for later PDF sending
         let mailing_address = contact.mailing_address.as_ref()
             .ok_or_else(|| LennardError::Workflow(
                 format!("Contact {} has no mailing address", contact.full_name)
             ))?;
-        
+
         // Validate the address contains actual data
         if !mailing_address.is_valid() {
             return Err(LennardError::Workflow(format!(
@@ -227,17 +227,90 @@ impl WorkflowSteps for WorkflowProcessor {
                 contact.full_name
             )));
         }
-        
-        // Generate PDF now so it's included in the approval
-        log::info!("Generating PDF for approval");
-        let pdf_template_data = PDFTemplateData::from_letter_and_address(letter, mailing_address);
-        let pdf_data = self.pdf_service.generate_pdf_typed("letter_template.odt", &pdf_template_data).await
-            .map_err(|e| {
-                log::error!("Failed to generate PDF for approval: {}", e);
-                LennardError::ServiceUnavailable(format!("PDF generation failed: {}", e))
-            })?;
-        
-        log::info!("PDF generated successfully, {} bytes", pdf_data.len());
+
+        // Generate PDF with retry logic for page limit violations
+        log::info!("Generating PDF for approval (with retry logic for page limits)");
+        const MAX_RETRIES: u32 = 3;
+        let mut current_letter = letter.clone();
+        let mut pdf_data: Option<Vec<u8>> = None;
+        let mut last_error: Option<LennardError> = None;
+
+        for attempt in 1..=MAX_RETRIES {
+            log::info!("PDF generation attempt {}/{}", attempt, MAX_RETRIES);
+
+            let pdf_template_data = PDFTemplateData::from_letter_and_address(&current_letter, mailing_address);
+
+            match self.pdf_service.generate_pdf_typed("letter_template.odt", &pdf_template_data).await {
+                Ok(data) => {
+                    log::info!("PDF generated successfully on attempt {}, {} bytes", attempt, data.len());
+                    pdf_data = Some(data);
+                    break;
+                }
+                Err(LennardError::PageLimitExceeded { page_count, limit, message }) => {
+                    log::warn!("PDF generation failed: page limit exceeded ({} pages generated, limit: {})",
+                              page_count, limit);
+                    log::warn!("Error message: {}", message);
+
+                    if attempt >= MAX_RETRIES {
+                        log::error!("Max retries reached ({}), giving up", MAX_RETRIES);
+                        last_error = Some(LennardError::PageLimitExceeded {
+                            page_count,
+                            limit,
+                            message: format!("{} (failed after {} attempts)", message, MAX_RETRIES)
+                        });
+                        break;
+                    }
+
+                    // Generate feedback for the AI to reduce content
+                    let current_length = current_letter.body.len();
+                    let reduction_percentage = ((page_count as f32 - 1.0) / page_count as f32 * 100.0).ceil() as u32;
+                    let target_length = (current_length as f32 * (100.0 - reduction_percentage as f32) / 100.0) as usize;
+
+                    let feedback = format!(
+                        "CRITICAL: The generated letter content exceeds the one-page limit (generated {} pages). \
+                         Current content length: {} characters. Please regenerate the letter with significantly \
+                         shorter content to fit within ONE page. Target length: approximately {} characters \
+                         (reduce by {}%). Focus on the most important points and be more concise while maintaining \
+                         professionalism and key selling points.",
+                        page_count, current_length, target_length, reduction_percentage
+                    );
+
+                    log::info!("Regenerating letter with feedback (attempt {}/{}): {}", attempt + 1, MAX_RETRIES, feedback);
+
+                    // Regenerate the letter with feedback
+                    match self.letter_service.regenerate_letter_with_feedback(
+                        contact,
+                        profile,
+                        dossier,
+                        &feedback
+                    ).await {
+                        Ok(new_letter) => {
+                            log::info!("Letter regenerated successfully. New body length: {} chars (was {} chars)",
+                                     new_letter.body.len(), current_length);
+                            current_letter = new_letter;
+                        }
+                        Err(e) => {
+                            log::error!("Failed to regenerate letter: {}", e);
+                            last_error = Some(e);
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("PDF generation failed with non-page-limit error: {}", e);
+                    last_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        let pdf_data = pdf_data.ok_or_else(|| {
+            last_error.unwrap_or_else(|| LennardError::ServiceUnavailable(
+                "PDF generation failed for unknown reason".to_string()
+            ))
+        })?;
+
+        log::info!("Final PDF generated successfully, {} bytes", pdf_data.len());
         
         // Create the required types
         let task_id = TaskId::new(task_id.to_string());
@@ -651,13 +724,10 @@ mod tests {
     }
 
     #[test]
-    fn test_no_english_status_in_filters() {
-        // Ensure we're not using English status
-        assert_ne!(TASK_STATUS_FILTER, "Not Started", 
-            "Status filter must NOT be in English");
-        
-        assert_ne!(TASK_STATUS_FILTER, "Not started", 
-            "Status filter must NOT be in English (lowercase)");
+    fn test_english_status_in_filters() {
+        // Ensure we're using English status (Zoho CRM uses English status values)
+        assert_eq!(TASK_STATUS_FILTER, "Not started",
+            "Status filter must be in English as per Zoho CRM API");
     }
 
     #[test]

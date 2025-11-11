@@ -36,7 +36,7 @@ pub trait WorkflowSteps: Send + Sync {
     async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile, dossier: &DossierResult) -> Result<LetterContent>;
     
     /// Step 6a: Start approval - creates and persists the approval request, returns approval ID
-    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, letter: &LetterContent, dossier: &DossierResult) -> Result<ApprovalId>;
+    async fn approval_start(&self, task_id: &str, contact: &ZohoContact, profile: &LinkedInProfile, letter: &LetterContent, dossier: &DossierResult) -> Result<ApprovalId>;
     
     /// Step 6b: Request approval - sends the approval request notification, returns approval status
     /// Note: This sends the notification for an already-created approval

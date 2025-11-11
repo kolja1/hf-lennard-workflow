@@ -63,19 +63,55 @@ impl PDFService {
             .multipart(form)
             .send()
             .await?;
-            
+
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+
+            // Check for page limit violation (HTTP 400 with specific error message)
+            if status == reqwest::StatusCode::BAD_REQUEST {
+                // Try to parse JSON error response
+                if let Ok(json_error) = serde_json::from_str::<serde_json::Value>(&error_text) {
+                    if let Some(detail) = json_error.get("detail").and_then(|d| d.as_str()) {
+                        // Check if it's a page limit error
+                        // Example: "Document exceeds one page limit (generated 2 pages). Please reduce content length."
+                        if detail.contains("exceeds one page limit") || (detail.contains("exceeds") && detail.contains("page")) {
+                            // Extract page count using regex
+                            if let Some(captures) = regex::Regex::new(r"generated (\d+) pages")
+                                .ok()
+                                .and_then(|re| re.captures(detail))
+                            {
+                                if let Some(page_count_str) = captures.get(1) {
+                                    if let Ok(page_count) = page_count_str.as_str().parse::<u32>() {
+                                        return Err(LennardError::PageLimitExceeded {
+                                            page_count,
+                                            limit: 1,
+                                            message: detail.to_string(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // If we couldn't parse the page count, still return page limit error with default
+                            return Err(LennardError::PageLimitExceeded {
+                                page_count: 2, // Default assumption
+                                limit: 1,
+                                message: detail.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+
             return Err(LennardError::ServiceUnavailable(
                 format!("PDF service returned {} - {}", status, error_text)
             ));
         }
-        
+
         let pdf_data = response.bytes().await?;
         Ok(pdf_data.to_vec())
     }
-    
+
     /// Generate PDF from template and data (legacy HashMap interface)
     pub async fn generate_pdf(&self, template_path: &str, data: &HashMap<String, serde_json::Value>) -> Result<Vec<u8>> {
         let url = format!("{}/generate-pdf", self.config.base_url);

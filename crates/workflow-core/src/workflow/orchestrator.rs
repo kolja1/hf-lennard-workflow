@@ -184,7 +184,7 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         log::info!("Step 4: Generated letter with subject '{}'", letter.subject);
         
         // Step 5a: Start approval - creates and persists the approval request
-        let approval_id = match self.steps.approval_start(&task.id, &contact, &letter, &dossier_result).await {
+        let approval_id = match self.steps.approval_start(&task.id, &contact, &profile, &letter, &dossier_result).await {
             Ok(id) => id,
             Err(e) => {
                 let error = LennardError::Workflow(format!("Step 5a (approval start) failed: {}", e));
@@ -501,7 +501,7 @@ mod tests {
             })
         }
         
-        async fn approval_start(&self, _task_id: &str, _contact: &ZohoContact, _letter: &LetterContent, _dossier: &DossierResult) -> Result<ApprovalId> {
+        async fn approval_start(&self, _task_id: &str, _contact: &ZohoContact, _profile: &LinkedInProfile, _letter: &LetterContent, _dossier: &DossierResult) -> Result<ApprovalId> {
             if self.should_fail_at_step == Some("approval_start") {
                 return Err(LennardError::ServiceUnavailable("Approval start failed".to_string()));
             }

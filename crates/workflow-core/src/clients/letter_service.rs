@@ -239,4 +239,95 @@ impl LetterServiceClient {
             company_name: approval_data.company_name.clone(),
         })
     }
+
+    /// Regenerate letter with feedback (simpler version for PDF page limit scenarios)
+    pub async fn regenerate_letter_with_feedback(
+        &self,
+        contact: &ZohoContact,
+        profile: &LinkedInProfile,
+        dossier_result: &DossierResult,
+        feedback: &str,
+    ) -> Result<LetterContent> {
+        // Create gRPC connection on-demand
+        let channel = Channel::from_shared(self.grpc_url.clone())
+            .map_err(|e| LennardError::Config(format!("Invalid gRPC URL: {}", e)))?
+            .connect()
+            .await
+            .map_err(|e| LennardError::ServiceUnavailable(
+                format!("Failed to connect to letter service at {}: {}", self.grpc_url, e)
+            ))?;
+
+        log::info!("Connected to letter generation service for regeneration with feedback");
+        let mut grpc_client = LetterGenerationServiceClient::new(channel);
+
+        // Build recipient info from contact
+        let recipient_info = RecipientInfo {
+            first_name: contact.full_name.split_whitespace().next().unwrap_or("").to_string(),
+            last_name: contact.full_name.split_whitespace().skip(1).collect::<Vec<_>>().join(" "),
+            full_name: contact.full_name.clone(),
+            email: contact.email.clone().unwrap_or_default(),
+            title: profile.headline.clone().unwrap_or_default(),
+            account_name: contact.company.clone().unwrap_or_default(),
+            mailing_street: contact.mailing_address.as_ref()
+                .map(|a| a.street.clone())
+                .unwrap_or_default(),
+            mailing_city: contact.mailing_address.as_ref()
+                .map(|a| a.city.clone())
+                .unwrap_or_default(),
+            mailing_zip: contact.mailing_address.as_ref()
+                .map(|a| a.postal_code.clone())
+                .unwrap_or_default(),
+            mailing_country: contact.mailing_address.as_ref()
+                .map(|a| a.country.clone())
+                .unwrap_or_default(),
+        };
+
+        // Build dossier content with BOTH personal and company dossiers
+        let dossier_content = DossierContent {
+            person_dossier: dossier_result.person_dossier_content.clone(),
+            company_dossier: dossier_result.company_dossier_content.clone(),
+        };
+
+        // Create the request with feedback in the feedback_history
+        let request = GenerateLetterRequest {
+            recipient_info: Some(recipient_info),
+            our_company_info: "HEIN+FRICKE GmbH & Co.KG - Führender IT-Dienstleister".to_string(),
+            feedback_history: vec![feedback.to_string()],
+            letter_type: "sales_introduction_revised".to_string(),
+            dossier_content: Some(dossier_content),
+        };
+
+        // Send the gRPC request
+        log::info!("Sending letter regeneration request for {} with feedback: {}",
+                  contact.full_name, feedback);
+        let response = grpc_client
+            .generate_letter(request)
+            .await
+            .map_err(|e| LennardError::ServiceUnavailable(
+                format!("Letter regeneration gRPC call failed: {}", e)
+            ))?;
+
+        let response_inner = response.into_inner();
+
+        if !response_inner.success {
+            return Err(LennardError::Processing(
+                format!("Letter regeneration failed: {}", response_inner.error_message)
+            ));
+        }
+
+        let letter_grpc = response_inner.letter
+            .ok_or_else(|| LennardError::Processing("No letter content in regeneration response".to_string()))?;
+
+        log::info!("Successfully regenerated letter with feedback");
+
+        // Convert gRPC letter content to our internal type
+        Ok(LetterContent {
+            subject: letter_grpc.betreff,
+            greeting: letter_grpc.anrede,
+            body: letter_grpc.brieftext,
+            sender_name: letter_grpc.sender_name,
+            recipient_name: contact.full_name.clone(),
+            company_name: dossier_result.company_name.clone(),
+        })
+    }
 }

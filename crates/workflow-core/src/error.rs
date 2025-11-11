@@ -43,6 +43,13 @@ pub enum LennardError {
     
     #[error("Deserialization error: {0}")]
     Deserialization(String),
+
+    #[error("PDF page limit exceeded: generated {page_count} pages (limit: {limit})")]
+    PageLimitExceeded {
+        page_count: u32,
+        limit: u32,
+        message: String,
+    },
 }
 
 /// Result type for Lennard operations
