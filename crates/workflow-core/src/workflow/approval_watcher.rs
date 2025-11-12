@@ -209,8 +209,13 @@ impl<T: WorkflowSteps + Send + Sync + 'static> ApprovalWatcher<T> {
     fn read_approval_data(&self, path: &Path) -> Result<ApprovalData> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| LennardError::IoError(format!("Failed to read approval file: {}", e)))?;
-            
-        serde_json::from_str(&content)
-            .map_err(|e| LennardError::Serialization(format!("Failed to parse approval data: {}", e)))
+
+        let mut approval_data: ApprovalData = serde_json::from_str(&content)
+            .map_err(|e| LennardError::Serialization(format!("Failed to parse approval data: {}", e)))?;
+
+        // Unescape literal \n characters that may have been stored in JSON
+        approval_data.current_letter.unescape_newlines();
+
+        Ok(approval_data)
     }
 }

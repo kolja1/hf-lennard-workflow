@@ -61,6 +61,16 @@ pub struct LetterContent {
     pub company_name: String,
 }
 
+impl LetterContent {
+    /// Unescape literal `\n` characters to actual newlines
+    /// This is needed when loading letter content from JSON where newlines were escaped
+    pub fn unescape_newlines(&mut self) {
+        self.body = self.body.replace("\\n", "\n");
+        self.subject = self.subject.replace("\\n", "\n");
+        self.greeting = self.greeting.replace("\\n", "\n");
+    }
+}
+
 /// PDF generation request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PDFRequest {

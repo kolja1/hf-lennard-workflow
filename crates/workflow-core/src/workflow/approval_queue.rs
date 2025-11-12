@@ -93,9 +93,15 @@ impl ApprovalQueue {
     /// Read approval data from file
     fn read_approval(&self, path: &Path) -> Result<ApprovalData> {
         let json = fs::read_to_string(path)?;
-        
-        serde_json::from_str(&json)
-            .map_err(|e| LennardError::Deserialization(format!("Failed to deserialize approval: {}", e)))
+
+        let mut approval_data: ApprovalData = serde_json::from_str(&json)
+            .map_err(|e| LennardError::Deserialization(format!("Failed to deserialize approval: {}", e)))?;
+
+        // Unescape literal \n characters that may have been stored in JSON
+        // This fixes the issue where newlines appear as literal "\n\n" in PDFs
+        approval_data.current_letter.unescape_newlines();
+
+        Ok(approval_data)
     }
     
     /// Move approval file between states
