@@ -1,5 +1,5 @@
 # Multi-stage build for Rust workflow service
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.83-bookworm AS builder
 
 # Install protobuf compiler
 RUN apt-get update && apt-get install -y \
@@ -11,15 +11,15 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /usr/src/app
 
 # Copy workspace files
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY proto/ ./proto/
 COPY contracts/ ./contracts/
 
 # Copy all crate sources
 COPY crates/ ./crates/
 
-# Build the release binary
-RUN cargo build --release --bin workflow-server
+# Generate lockfile and build the release binary
+RUN cargo generate-lockfile && cargo build --release --bin workflow-server
 
 # Runtime stage
 FROM debian:bookworm-slim

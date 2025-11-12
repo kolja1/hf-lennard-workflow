@@ -420,17 +420,106 @@ impl WorkflowSteps for WorkflowProcessor {
         Ok(ApprovalState::AwaitingUserResponse)
     }
     
+    async fn send_pdf_binary(&self, pdf_data: Vec<u8>, recipient_address: &MailingAddress) -> Result<String> {
+        use crate::types::{LetterExpressRequest, MailingAddress, PrintColor, PrintMode, ShippingType};
+        use crate::paths::{pdfs_dir, letterexpress_logs_dir};
+        use std::fs;
+
+        // Validate the address contains actual data
+        if !recipient_address.is_valid() {
+            return Err(LennardError::Workflow(format!(
+                "Invalid mailing address with empty fields. Cannot send PDF without valid recipient address."
+            )));
+        }
+
+        // Save PDF locally first (for backup and debugging)
+        let pdf_dir = pdfs_dir();
+        fs::create_dir_all(&pdf_dir).ok();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let pdf_filename = format!("letter_approved_{}.pdf", timestamp);
+        let pdf_path = pdf_dir.join(&pdf_filename);
+        if let Err(e) = fs::write(&pdf_path, &pdf_data) {
+            log::warn!("Failed to save PDF locally: {}", e);
+        } else {
+            log::info!("PDF saved locally at: {:?}", pdf_path);
+        }
+
+        // Create sender address (placeholder)
+        let sender_address = MailingAddress {
+            street: "Example Street 123".to_string(),
+            city: "Example City".to_string(),
+            state: Some("Example State".to_string()),
+            postal_code: "12345".to_string(),
+            country: "Germany".to_string(),
+        };
+
+        // Create LetterExpress request
+        let request = LetterExpressRequest {
+            pdf_data: pdf_data.clone(),
+            recipient_address: recipient_address.clone(),
+            sender_address,
+            color: PrintColor::BlackWhite,
+            mode: PrintMode::Simplex,
+            shipping: ShippingType::Standard,
+        };
+
+        // Try to send via LetterExpress
+        log::info!("Attempting to send approved PDF via LetterExpress");
+
+        match self.letterexpress_client.send_letter(&request).await {
+            Ok(tracking_id) => {
+                log::info!("Successfully sent approved PDF via LetterExpress. Tracking ID: {}", tracking_id);
+                Ok(tracking_id)
+            },
+            Err(e) => {
+                // Log detailed error
+                log::error!("LetterExpress API failed for approved PDF: {}", e);
+
+                // Log to error file
+                let error_log_dir = letterexpress_logs_dir();
+                fs::create_dir_all(&error_log_dir).ok();
+                let error_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let error_log_file = error_log_dir.join(format!("error_approved_{}.log", error_timestamp));
+                let error_details = format!(
+                    "LetterExpress Error Log (Approved PDF)\n\
+                    ========================\n\
+                    Timestamp: {}\n\
+                    Recipient Address:\n  {}\n  {}, {} {}\n  {}\n\
+                    Error: {}\n\
+                    PDF saved at: {:?}\n",
+                    error_timestamp,
+                    recipient_address.street,
+                    recipient_address.city,
+                    recipient_address.state.as_deref().unwrap_or(""),
+                    recipient_address.postal_code,
+                    recipient_address.country,
+                    e,
+                    pdf_path
+                );
+                fs::write(error_log_file, error_details).ok();
+
+                Err(LennardError::Workflow(format!("LetterExpress failed to send approved PDF: {}", e)))
+            }
+        }
+    }
+
     async fn send_pdf(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<String> {
         use crate::types::{LetterExpressRequest, MailingAddress, PrintColor, PrintMode, ShippingType, PDFTemplateData};
         use crate::paths::{pdfs_dir, letterexpress_logs_dir};
         use std::fs;
-        
+
         // Get mailing address from contact - REQUIRED
         let recipient_address = contact.mailing_address.as_ref()
             .ok_or_else(|| LennardError::Workflow(
                 format!("Contact {} has no mailing address. Address must be extracted from company dossier first.", contact.full_name)
             ))?;
-        
+
         // Validate the address contains actual data
         if !recipient_address.is_valid() {
             return Err(LennardError::Workflow(format!(
@@ -438,10 +527,10 @@ impl WorkflowSteps for WorkflowProcessor {
                 contact.full_name
             )));
         }
-        
+
         // Create strongly typed PDF data
         let pdf_template_data = PDFTemplateData::from_letter_and_address(letter, recipient_address);
-        
+
         // Generate PDF using template with strongly typed data
         let pdf_data = self.pdf_service.generate_pdf_typed("letter_template.odt", &pdf_template_data).await?;
         
@@ -577,7 +666,48 @@ impl WorkflowSteps for WorkflowProcessor {
             .update_task_status(task_id, "Done", success_message)
             .await
     }
-    
+
+    async fn mark_task_in_progress(
+        &self,
+        task_id: &str
+    ) -> Result<()> {
+        // Mark task as "In Progress" to prevent duplicate execution
+        self.zoho_client
+            .mark_task_in_progress(task_id)
+            .await
+    }
+
+    async fn create_follow_up_task(
+        &self,
+        contact_id: &str,
+        _original_task_id: &str
+    ) -> Result<String> {
+        use chrono::Utc;
+
+        // Calculate due date: 3 working days from now
+        let now = Utc::now();
+        let due_date = crate::clients::zoho::add_working_days(now, 3);
+
+        log::info!(
+            "Creating follow-up task for contact {} with due date {}",
+            contact_id,
+            due_date.format("%Y-%m-%d")
+        );
+
+        // Create the follow-up task
+        let task_id = self.zoho_client
+            .create_task(
+                "n8n.campaign.continue",
+                TASK_OWNER_ID,  // Lennard's user ID
+                contact_id,
+                due_date
+            )
+            .await?;
+
+        log::info!("Successfully created follow-up task: {}", task_id);
+        Ok(task_id)
+    }
+
     async fn attach_file_to_task(
         &self,
         task_id: &str,

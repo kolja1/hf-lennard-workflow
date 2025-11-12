@@ -44,7 +44,10 @@ pub trait WorkflowSteps: Send + Sync {
     
     /// Step 7: Send PDF - requires approved letter and contact, returns tracking ID
     async fn send_pdf(&self, letter: &LetterContent, contact: &ZohoContact) -> Result<String>;
-    
+
+    /// Send pre-generated PDF binary - used for approved PDFs to avoid regeneration
+    async fn send_pdf_binary(&self, pdf_data: Vec<u8>, recipient_address: &MailingAddress) -> Result<String>;
+
     /// Send error notification via Telegram
     async fn send_error_notification(
         &self,
@@ -67,7 +70,20 @@ pub trait WorkflowSteps: Send + Sync {
         task_id: &str,
         success_message: &str
     ) -> Result<()>;
-    
+
+    /// Mark Zoho task as in progress (prevents duplicate execution)
+    async fn mark_task_in_progress(
+        &self,
+        task_id: &str
+    ) -> Result<()>;
+
+    /// Create a follow-up task for the contact
+    async fn create_follow_up_task(
+        &self,
+        contact_id: &str,
+        original_task_id: &str
+    ) -> Result<String>;
+
     /// Attach file to Zoho task
     async fn attach_file_to_task(
         &self,

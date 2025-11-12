@@ -110,7 +110,12 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
     /// Process a single task through the complete 7-step workflow
     async fn process_single_task(&self, task: &zoho_generated_types::TasksResponse) -> Result<String> {
         log::info!("Starting 7-step workflow for task: {}", task.id);
-        
+
+        // CRITICAL: Mark task as "In Progress" IMMEDIATELY to prevent duplicate execution
+        // This must happen before any long-running operations (dossier, letter, PDF generation)
+        self.steps.mark_task_in_progress(&task.id).await
+            .map_err(|e| LennardError::Workflow(format!("Failed to mark task as in progress: {}", e)))?;
+
         // Step 1: Load contact - requires task, guaranteed to return contact
         let mut contact = match self.steps.load_contact(task).await {
             Ok(c) => c,
@@ -321,28 +326,17 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         let pdf_base64 = approval_data.pdf_base64.as_ref()
             .ok_or_else(|| LennardError::Workflow("Approval missing PDF data".to_string()))?;
         
-        // Decode the PDF
-        let _pdf_data = general_purpose::STANDARD.decode(pdf_base64)
+        // Decode the approved PDF - we will use THIS PDF (not regenerate it)
+        let pdf_data = general_purpose::STANDARD.decode(pdf_base64)
             .map_err(|e| LennardError::Workflow(format!("Failed to decode PDF: {}", e)))?;
-        
-        // We need a minimal contact object for send_pdf
-        // Since we can't easily reconstruct the full ZohoContact, we'll create a minimal one
-        let contact = crate::types::ZohoContact {
-            id: approval_data.contact_id.to_string(),
-            full_name: approval_data.recipient_name.clone(),
-            company: Some(approval_data.company_name.clone()),
-            mailing_address: Some(mailing_address.clone()),
-            email: None,
-            phone: None,
-            linkedin_id: None,
-        };
-        
-        // Step 6: Send PDF via LetterExpress
-        // NOTE: send_pdf will regenerate the PDF from the letter content
-        // This is OK because we have all the data needed (letter + address)
-        // In the future, we could optimize to reuse the existing PDF
-        let tracking_id = self.steps.send_pdf(&approval_data.current_letter, &contact).await
-            .map_err(|e| LennardError::Workflow(format!("Step 6 (send PDF) failed after approval: {}", e)))?;
+
+        // Step 6: Send approved PDF via LetterExpress using the binary method
+        // IMPORTANT: We use the EXACT PDF that was approved, not a regenerated one
+        // This prevents page limit violations if the regenerated PDF differs from approved
+        log::info!("Sending approved PDF via LetterExpress (NOT regenerating)");
+
+        let tracking_id = self.steps.send_pdf_binary(pdf_data, mailing_address).await
+            .map_err(|e| LennardError::Workflow(format!("Step 6 (send approved PDF) failed: {}", e)))?;
             
         log::info!("Step 6: Letter sent successfully after approval, tracking: {}", tracking_id);
         
@@ -369,7 +363,18 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         } else {
             log::info!("Updated Zoho task {} status to 'Done'", task_id);
         }
-        
+
+        // Create follow-up task for the contact
+        match self.steps.create_follow_up_task(approval_data.contact_id.as_str(), &task_id).await {
+            Ok(follow_up_task_id) => {
+                log::info!("Created follow-up task {} for contact {}", follow_up_task_id, approval_data.contact_id);
+            }
+            Err(e) => {
+                log::error!("Failed to create follow-up task for contact {}: {}", approval_data.contact_id, e);
+                // Don't fail the whole workflow if follow-up task creation fails
+            }
+        }
+
         Ok(format!("Letter sent successfully after approval, tracking: {}", tracking_id))
     }
 }

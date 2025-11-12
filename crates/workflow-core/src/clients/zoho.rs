@@ -128,6 +128,26 @@ impl ZohoClient<Unauthenticated> {
     
 }
 
+/// Helper function to add working days (Mon-Fri) to a date, skipping weekends
+pub fn add_working_days(start: chrono::DateTime<chrono::Utc>, days: i32) -> chrono::DateTime<chrono::Utc> {
+    use chrono::Datelike;
+
+    let mut current = start;
+    let mut days_added = 0;
+
+    while days_added < days {
+        current = current + chrono::Duration::days(1);
+
+        // Check if it's a weekday (Monday = 1, Sunday = 7)
+        let weekday = current.weekday().num_days_from_monday();
+        if weekday < 5 {  // Monday-Friday (0-4)
+            days_added += 1;
+        }
+    }
+
+    current
+}
+
 // Implementation for authenticated client (API methods only available here)
 impl ZohoClient<Authenticated> {
     /// Check if client is authenticated (always true for Authenticated state)
@@ -286,7 +306,39 @@ impl ZohoClient<Authenticated> {
         log::info!("Updated Zoho task {} status to '{}' with description", task_id, status);
         Ok(())
     }
-    
+
+    /// Mark task as "In Progress" (to prevent duplicate execution)
+    pub async fn mark_task_in_progress(&self, task_id: &str) -> Result<()> {
+        let url = format!("{}/crm/v2/Tasks/{}", self.base_url, task_id);
+
+        // Get fresh token from Nango
+        let access_token = self.get_fresh_token().await?;
+
+        // Build update payload - only update status
+        let update_data = serde_json::json!({
+            "data": [{
+                "Status": "In Progress",
+            }]
+        });
+
+        let response = self.http_client
+            .put(&url)
+            .bearer_auth(&access_token)
+            .json(&update_data)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(LennardError::ServiceUnavailable(
+                format!("Failed to mark Zoho task as in progress: {}", error_text)
+            ));
+        }
+
+        log::info!("Marked Zoho task {} as 'In Progress' (prevents duplicate execution)", task_id);
+        Ok(())
+    }
+
     /// Attach a file to a Zoho task
     /// API Documentation: https://www.zoho.com/crm/developer/docs/api/v2/upload-attachment.html
     pub async fn attach_file_to_task(&self, task_id: &str, file_data: Vec<u8>, filename: &str) -> Result<()> {
@@ -478,6 +530,81 @@ impl ZohoClient<Authenticated> {
         
         let data: Value = response.json().await?;
         Ok(data)
+    }
+
+    /// Create a new task in Zoho CRM
+    /// API Documentation: https://www.zoho.com/crm/developer/docs/api/v2/insert-records.html
+    pub async fn create_task(
+        &self,
+        subject: &str,
+        owner_id: &str,
+        contact_id: &str,
+        due_date: chrono::DateTime<chrono::Utc>,
+    ) -> Result<String> {
+        let url = format!("{}/crm/v2/Tasks", self.base_url);
+
+        // Get fresh token from Nango
+        let access_token = self.get_fresh_token().await?;
+
+        // Format due date as YYYY-MM-DD (Zoho expects date only, not datetime)
+        let due_date_str = due_date.format("%Y-%m-%d").to_string();
+
+        // Build task creation payload
+        let task_data = json!({
+            "data": [{
+                "Subject": subject,
+                "Owner": {
+                    "id": owner_id
+                },
+                "Who_Id": {
+                    "id": contact_id
+                },
+                "Due_Date": due_date_str,
+                "Status": "Not started"
+            }]
+        });
+
+        let response = self.http_client
+            .post(&url)
+            .bearer_auth(&access_token)
+            .json(&task_data)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(LennardError::ServiceUnavailable(
+                format!("Failed to create Zoho task: {}", error_text)
+            ));
+        }
+
+        // Parse response to get the created task ID
+        let response_json: Value = response.json().await?;
+
+        if let Some(data) = response_json.get("data").and_then(|d| d.as_array()) {
+            if let Some(first) = data.first() {
+                if let Some(details) = first.get("details") {
+                    if let Some(id) = details.get("id").and_then(|i| i.as_str()) {
+                        log::info!("Created Zoho task {} with subject: {}", id, subject);
+                        return Ok(id.to_string());
+                    }
+                }
+            }
+        }
+
+        // If we didn't get the ID from details, try the direct id field
+        if let Some(data) = response_json.get("data").and_then(|d| d.as_array()) {
+            if let Some(first) = data.first() {
+                if let Some(id) = first.get("id").and_then(|i| i.as_str()) {
+                    log::info!("Created Zoho task {} with subject: {}", id, subject);
+                    return Ok(id.to_string());
+                }
+            }
+        }
+
+        Err(LennardError::ServiceUnavailable(
+            format!("Unexpected response from Zoho when creating task: {}", response_json)
+        ))
     }
 }
 
