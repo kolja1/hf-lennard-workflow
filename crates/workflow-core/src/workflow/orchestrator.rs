@@ -388,10 +388,45 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
             &improved_approval.approval_id.to_string(),
             improved_approval.letter_history.len()
         ).await?;
-        
+
         Ok(improved_approval)
     }
-    
+
+    /// Handle workflow rejection - update Zoho task and send notification
+    pub async fn handle_rejection(
+        &self,
+        task_id: &str,
+        recipient_name: &str,
+        rejection_reason: &str,
+    ) -> Result<()> {
+        log::info!("Handling rejection for task {} ({}): {}", task_id, recipient_name, rejection_reason);
+
+        // Update Zoho task status to "Waiting for others"
+        self.steps.update_task_error_status(
+            task_id,
+            &format!("Workflow rejected by user: {}", rejection_reason)
+        ).await?;
+
+        // Send Telegram notification
+        let notification_message = format!(
+            "Workflow rejected: {}",
+            rejection_reason
+        );
+
+        if let Err(e) = self.steps.send_error_notification(
+            task_id,
+            recipient_name,
+            recipient_name, // Using recipient_name as both contact and company name
+            &notification_message
+        ).await {
+            log::error!("Failed to send rejection notification to Telegram: {}", e);
+            // Don't fail the whole operation if notification fails
+        }
+
+        log::info!("Rejection handled for task {}: Zoho updated and notification sent", task_id);
+        Ok(())
+    }
+
     /// Continue workflow after approval - complete Step 6 (send PDF via LetterExpress)
     pub async fn continue_after_approval(&self, approval_data: &super::approval_types::ApprovalData) -> Result<String> {
         use base64::{Engine as _, engine::general_purpose};

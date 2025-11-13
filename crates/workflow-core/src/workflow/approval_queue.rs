@@ -308,21 +308,50 @@ impl ApprovalQueue {
             if current_state != ApprovalState::AwaitingUserResponse {
                 return Ok(None);
             }
-            
+
             let mut approval = self.read_approval(&path)?;
             approval.add_feedback(feedback_text, user_id);
-            
+
             // Write updated approval
             self.write_approval(&path, &approval)?;
-            
+
             // Move to needs improvement state
             let new_path = self.get_approval_path(ApprovalState::NeedsImprovement, approval_id);
             self.move_approval(&path, &new_path)?;
-            
+
             log::info!("Approval {} needs improvement based on feedback", approval_id);
             return Ok(Some(approval));
         }
-        
+
+        Ok(None)
+    }
+
+    /// Mark approval as rejected (failed) - no automatic retry
+    pub fn mark_as_rejected(
+        &self,
+        approval_id: &ApprovalId,
+        rejection_reason: String,
+        user_id: UserId,
+    ) -> Result<Option<ApprovalData>> {
+        if let Some((path, current_state)) = self.find_approval_path(approval_id) {
+            if current_state != ApprovalState::AwaitingUserResponse {
+                return Ok(None);
+            }
+
+            let mut approval = self.read_approval(&path)?;
+            approval.add_feedback(rejection_reason, user_id);
+
+            // Write updated approval
+            self.write_approval(&path, &approval)?;
+
+            // Move to failed state (no automatic retry)
+            let new_path = self.get_approval_path(ApprovalState::Failed, approval_id);
+            self.move_approval(&path, &new_path)?;
+
+            log::info!("Approval {} marked as rejected and moved to failed directory", approval_id);
+            return Ok(Some(approval));
+        }
+
         Ok(None)
     }
     

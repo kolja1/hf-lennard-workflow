@@ -241,30 +241,31 @@ impl ApprovalService for GrpcServiceWrapper {
                     }
                 }
             }
-            workflow_grpc::approval_response::Decision::Rejected | 
-            workflow_grpc::approval_response::Decision::NeedsRevision => {
-                // Convert string ID to ApprovalId type
+            workflow_grpc::approval_response::Decision::Rejected => {
+                // Handle rejection - move to failed directory and update Zoho
                 let approval_id_typed = workflow_core::workflow::approval_types::ApprovalId::from(approval_id.clone());
-                let decision = approval.decision();
                 let feedback = approval.feedback.unwrap_or_else(|| "No feedback provided".to_string());
                 let user_id = workflow_core::workflow::approval_types::UserId::new(approval.decided_by);
-                
-                log::info!("Processing {} for approval ID: {} with feedback: {}", 
-                    if decision == workflow_grpc::approval_response::Decision::Rejected { "rejection" } else { "revision request" },
-                    approval_id, feedback);
-                
-                // Process rejection/revision through the queue
-                match self.approval_queue.handle_user_feedback(&approval_id_typed, feedback, user_id) {
-                    Ok(Some(_approval_data)) => {
-                        log::info!("Successfully processed feedback for approval: {}", approval_id);
-                        
+
+                log::info!("Processing rejection for approval ID: {} with reason: {}", approval_id, feedback);
+
+                // Mark as rejected (moves to failed directory)
+                match self.approval_queue.mark_as_rejected(&approval_id_typed, feedback.clone(), user_id) {
+                    Ok(Some(approval_data)) => {
+                        log::info!("Marked approval {} as rejected, moved to failed directory", approval_id);
+
+                        // Update Zoho task and send Telegram notification
+                        let task_id = approval_data.task_id.as_str();
+                        let recipient_name = approval_data.recipient_name.as_str();
+
+                        if let Err(e) = self.orchestrator.handle_rejection(task_id, recipient_name, &feedback).await {
+                            log::error!("Failed to handle rejection for task {}: {}", task_id, e);
+                            // Continue anyway - file is already moved to failed
+                        }
+
                         ProtoApprovalState {
                             approval_id: approval_id.clone(),
-                            status: if decision == workflow_grpc::approval_response::Decision::Rejected {
-                                workflow_grpc::approval_state::Status::Rejected as i32
-                            } else {
-                                workflow_grpc::approval_state::Status::InRevision as i32
-                            },
+                            status: workflow_grpc::approval_state::Status::Rejected as i32,
                             iterations: vec![],
                             final_pdf: None,
                             final_pdf_filename: None,
@@ -275,8 +276,39 @@ impl ApprovalService for GrpcServiceWrapper {
                         return Err(Status::not_found(format!("Approval {} not found or not awaiting response", approval_id)));
                     }
                     Err(e) => {
-                        log::error!("Failed to process feedback for approval {}: {}", approval_id, e);
-                        return Err(Status::internal(format!("Failed to process feedback: {}", e)));
+                        log::error!("Failed to mark approval {} as rejected: {}", approval_id, e);
+                        return Err(Status::internal(format!("Failed to process rejection: {}", e)));
+                    }
+                }
+            }
+            workflow_grpc::approval_response::Decision::NeedsRevision => {
+                // Handle revision request - move to needs_improvement for automatic retry
+                let approval_id_typed = workflow_core::workflow::approval_types::ApprovalId::from(approval_id.clone());
+                let feedback = approval.feedback.unwrap_or_else(|| "No feedback provided".to_string());
+                let user_id = workflow_core::workflow::approval_types::UserId::new(approval.decided_by);
+
+                log::info!("Processing revision request for approval ID: {} with feedback: {}", approval_id, feedback);
+
+                // Process revision through the queue (will be picked up by NeedsImprovementWatcher)
+                match self.approval_queue.handle_user_feedback(&approval_id_typed, feedback, user_id) {
+                    Ok(Some(_approval_data)) => {
+                        log::info!("Successfully processed revision request for approval: {}", approval_id);
+
+                        ProtoApprovalState {
+                            approval_id: approval_id.clone(),
+                            status: workflow_grpc::approval_state::Status::InRevision as i32,
+                            iterations: vec![],
+                            final_pdf: None,
+                            final_pdf_filename: None,
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!("Approval {} not found or not in awaiting state", approval_id);
+                        return Err(Status::not_found(format!("Approval {} not found or not awaiting response", approval_id)));
+                    }
+                    Err(e) => {
+                        log::error!("Failed to process revision request for approval {}: {}", approval_id, e);
+                        return Err(Status::internal(format!("Failed to process revision: {}", e)));
                     }
                 }
             }
