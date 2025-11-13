@@ -201,7 +201,38 @@ impl WorkflowSteps for WorkflowProcessor {
     async fn update_contact_address(&self, contact_id: &str, address: &MailingAddress) -> Result<()> {
         self.zoho_client.update_contact_address(contact_id, address).await
     }
-    
+
+    async fn store_letter_content(
+        &self,
+        contact_id: &str,
+        company_name: &str,
+        letter: &LetterContent,
+        tracking_id: &str
+    ) -> Result<()> {
+        use chrono::Utc;
+
+        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let note_title = format!("Letter Sent to {} ({})", company_name, timestamp);
+
+        // Format the letter content from its structured fields
+        let formatted_letter = format!(
+            "Subject: {}\n\n{}\n\n{}\n\nBest regards,\n{}",
+            letter.subject,
+            letter.greeting,
+            letter.body,
+            letter.sender_name
+        );
+
+        let note_content = format!(
+            "Letter Content:\n\n{}\n\n---\n\nTracking ID: {}\nSent at: {}",
+            formatted_letter,
+            tracking_id,
+            timestamp
+        );
+
+        self.zoho_client.create_contact_note(contact_id, &note_title, &note_content).await
+    }
+
     async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile, dossier: &DossierResult) -> Result<LetterContent> {
         // Use the letter service which returns the correct LetterContent type
         self.letter_service.generate_letter(contact, profile, dossier).await

@@ -239,7 +239,46 @@ impl ZohoClient<Authenticated> {
         log::info!("Successfully updated contact {} address in Zoho CRM", contact_id);
         Ok(())
     }
-    
+
+    /// Create a note in Zoho CRM contact record
+    pub async fn create_contact_note(
+        &self,
+        contact_id: &str,
+        note_title: &str,
+        note_content: &str
+    ) -> Result<()> {
+        let url = format!("{}/crm/v8/Contacts/{}/Notes", self.base_url, contact_id);
+
+        let access_token = self.get_fresh_token().await?;
+
+        let note_data = json!({
+            "data": [{
+                "Note_Title": note_title,
+                "Note_Content": note_content,
+                "Parent_Id": {
+                    "id": contact_id
+                }
+            }]
+        });
+
+        let response = self.http_client
+            .post(&url)
+            .bearer_auth(&access_token)
+            .json(&note_data)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(LennardError::ServiceUnavailable(
+                format!("Failed to create Zoho note: {}", error_text)
+            ));
+        }
+
+        log::info!("Created note in Zoho contact {}: {}", contact_id, note_title);
+        Ok(())
+    }
+
     /// Get a single task by ID (only available for authenticated clients)
     /// Uses the single record endpoint which returns complete data including Who_Id
     pub async fn get_task_by_id(&self, task_id: &str) -> Result<Option<TasksResponse>> {

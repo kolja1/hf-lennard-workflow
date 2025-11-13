@@ -456,9 +456,22 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
 
         let tracking_id = self.steps.send_pdf_binary(pdf_data, mailing_address).await
             .map_err(|e| LennardError::Workflow(format!("Step 6 (send approved PDF) failed: {}", e)))?;
-            
+
         log::info!("Step 6: Letter sent successfully after approval, tracking: {}", tracking_id);
-        
+
+        // Store letter content in Zoho Notes for audit trail
+        if let Err(e) = self.steps.store_letter_content(
+            &approval_data.contact_id.to_string(),
+            &approval_data.company_name,
+            &approval_data.current_letter,
+            &tracking_id
+        ).await {
+            log::error!("Failed to store letter content in Zoho: {}", e);
+            // Don't fail the whole workflow if note creation fails
+        } else {
+            log::info!("Letter content stored in Zoho contact notes");
+        }
+
         // Update task status in Zoho to mark as completed and attach the letter
         let task_id = approval_data.task_id.to_string();
         let success_message = format!("Brief erfolgreich versendet. Tracking: {}", tracking_id);

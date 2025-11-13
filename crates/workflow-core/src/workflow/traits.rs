@@ -31,7 +31,16 @@ pub trait WorkflowSteps: Send + Sync {
     
     /// Step 4.5: Update contact address in Zoho CRM
     async fn update_contact_address(&self, contact_id: &str, address: &MailingAddress) -> Result<()>;
-    
+
+    /// Store letter content in Zoho CRM after successful send
+    async fn store_letter_content(
+        &self,
+        contact_id: &str,
+        company_name: &str,
+        letter: &LetterContent,
+        tracking_id: &str
+    ) -> Result<()>;
+
     /// Step 5: Generate letter - requires contact, profile and dossier, returns required LetterContent
     async fn generate_letter(&self, contact: &ZohoContact, profile: &LinkedInProfile, dossier: &DossierResult) -> Result<LetterContent>;
     
