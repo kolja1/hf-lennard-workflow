@@ -285,11 +285,95 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
         improved_approval.current_letter = improved_letter;
         improved_approval.state = ApprovalState::PendingApproval;
         improved_approval.updated_at = Utc::now();
-        
+
         // Generate new PDF for the improved letter using the stored mailing address
+        // with automatic retry logic for page limit violations
         let mailing_address = improved_approval.mailing_address.as_ref()
             .ok_or_else(|| LennardError::Workflow("Missing mailing address in approval data".to_string()))?;
-        let pdf_bytes = self.steps.generate_pdf_with_address(&improved_approval.current_letter, mailing_address).await?;
+
+        // PDF generation with retry logic for page limit violations
+        log::info!("Generating PDF for improved letter (with retry logic for page limits)");
+        const MAX_RETRIES: u32 = 3;
+        let mut current_letter = improved_approval.current_letter.clone();
+        let mut pdf_data: Option<Vec<u8>> = None;
+        let mut last_error: Option<LennardError> = None;
+
+        for attempt in 1..=MAX_RETRIES {
+            log::info!("PDF generation attempt {}/{} for improved letter", attempt, MAX_RETRIES);
+
+            match self.steps.generate_pdf_with_address(&current_letter, mailing_address).await {
+                Ok(data) => {
+                    log::info!("PDF generated successfully on attempt {}, {} bytes", attempt, data.len());
+                    pdf_data = Some(data);
+                    break;
+                }
+                Err(LennardError::PageLimitExceeded { page_count, limit, message }) => {
+                    log::warn!("PDF generation failed: page limit exceeded ({} pages generated, limit: {})",
+                              page_count, limit);
+                    log::warn!("Error message: {}", message);
+
+                    if attempt >= MAX_RETRIES {
+                        log::error!("Max retries reached ({}), giving up on improved letter", MAX_RETRIES);
+                        last_error = Some(LennardError::PageLimitExceeded {
+                            page_count,
+                            limit,
+                            message: format!("{} (failed after {} attempts with user feedback)", message, MAX_RETRIES)
+                        });
+                        break;
+                    }
+
+                    // Generate automatic feedback for the AI to reduce content
+                    let current_length = current_letter.body.len();
+                    let reduction_percentage = ((page_count as f32 - 1.0) / page_count as f32 * 100.0).ceil() as u32;
+                    let target_length = (current_length as f32 * (100.0 - reduction_percentage as f32) / 100.0) as usize;
+
+                    let auto_feedback = format!(
+                        "CRITICAL: The generated letter content exceeds the one-page limit (generated {} pages). \
+                         Current content length: {} characters. Please regenerate the letter with significantly \
+                         shorter content to fit within ONE page. Target length: approximately {} characters \
+                         (reduce by {}%). Focus on the most important points and be more concise while maintaining \
+                         professionalism and key selling points. IMPORTANT: Also apply the original user feedback: {}",
+                        page_count, current_length, target_length, reduction_percentage, feedback
+                    );
+
+                    log::info!("Regenerating improved letter with automatic feedback (attempt {}/{}): {}",
+                              attempt + 1, MAX_RETRIES, auto_feedback);
+
+                    // Regenerate the improved letter with combined feedback (user + automatic length reduction)
+                    match self.steps.generate_improved_letter(
+                        approval_data,
+                        &auto_feedback
+                    ).await {
+                        Ok(new_letter) => {
+                            log::info!("Improved letter regenerated successfully. New body length: {} chars (was {} chars)",
+                                     new_letter.body.len(), current_length);
+                            current_letter = new_letter;
+                        }
+                        Err(e) => {
+                            log::error!("Failed to regenerate improved letter: {}", e);
+                            last_error = Some(e);
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("PDF generation failed with non-page-limit error: {}", e);
+                    last_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        let pdf_bytes = pdf_data.ok_or_else(|| {
+            last_error.unwrap_or_else(|| LennardError::ServiceUnavailable(
+                "PDF generation failed for unknown reason".to_string()
+            ))
+        })?;
+
+        log::info!("Final improved PDF generated successfully, {} bytes", pdf_bytes.len());
+
+        // Update the current letter with the final version (may have been regenerated for length)
+        improved_approval.current_letter = current_letter;
         improved_approval.pdf_base64 = Some(base64::engine::general_purpose::STANDARD.encode(&pdf_bytes));
         
         // Send the improved letter to Telegram for re-approval
