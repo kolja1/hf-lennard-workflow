@@ -10,6 +10,7 @@ pub mod workflow;
 pub mod types;
 pub mod error;
 pub mod paths;
+pub mod constants;
 
 // Re-export main types for easy access
 pub use config::LennardConfig;

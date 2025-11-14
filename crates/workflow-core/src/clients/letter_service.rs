@@ -246,88 +246,47 @@ impl LetterServiceClient {
         contact: &ZohoContact,
         profile: &LinkedInProfile,
         dossier_result: &DossierResult,
+        letter: &LetterContent,
         feedback: &str,
     ) -> Result<LetterContent> {
-        // Create gRPC connection on-demand
-        let channel = Channel::from_shared(self.grpc_url.clone())
-            .map_err(|e| LennardError::Config(format!("Invalid gRPC URL: {}", e)))?
-            .connect()
-            .await
-            .map_err(|e| LennardError::ServiceUnavailable(
-                format!("Failed to connect to letter service at {}: {}", self.grpc_url, e)
-            ))?;
+        use chrono::Utc;
 
-        log::info!("Connected to letter generation service for regeneration with feedback");
-        let mut grpc_client = LetterGenerationServiceClient::new(channel);
+        log::info!("Regenerating letter with feedback using GenerateLetterWithApproval endpoint");
 
-        // Build recipient info from contact
-        let recipient_info = RecipientInfo {
-            first_name: contact.full_name.split_whitespace().next().unwrap_or("").to_string(),
-            last_name: contact.full_name.split_whitespace().skip(1).collect::<Vec<_>>().join(" "),
-            full_name: contact.full_name.clone(),
-            email: contact.email.clone().unwrap_or_default(),
-            title: profile.headline.clone().unwrap_or_default(),
-            account_name: contact.company.clone().unwrap_or_default(),
-            mailing_street: contact.mailing_address.as_ref()
-                .map(|a| a.street.clone())
-                .unwrap_or_default(),
-            mailing_city: contact.mailing_address.as_ref()
-                .map(|a| a.city.clone())
-                .unwrap_or_default(),
-            mailing_zip: contact.mailing_address.as_ref()
-                .map(|a| a.postal_code.clone())
-                .unwrap_or_default(),
-            mailing_country: contact.mailing_address.as_ref()
-                .map(|a| a.country.clone())
-                .unwrap_or_default(),
-        };
-
-        // Build dossier content with BOTH personal and company dossiers
-        let dossier_content = DossierContent {
-            person_dossier: dossier_result.person_dossier_content.clone(),
-            company_dossier: dossier_result.company_dossier_content.clone(),
-        };
-
-        // Create the request with feedback in the feedback_history
-        let request = GenerateLetterRequest {
-            recipient_info: Some(recipient_info),
-            our_company_info: "HEIN+FRICKE GmbH & Co.KG - Führender IT-Dienstleister".to_string(),
-            feedback_history: vec![feedback.to_string()],
-            letter_type: "sales_introduction_revised".to_string(),
-            dossier_content: Some(dossier_content),
-        };
-
-        // Send the gRPC request
-        log::info!("Sending letter regeneration request for {} with feedback: {}",
-                  contact.full_name, feedback);
-        let response = grpc_client
-            .generate_letter(request)
-            .await
-            .map_err(|e| LennardError::ServiceUnavailable(
-                format!("Letter regeneration gRPC call failed: {}", e)
-            ))?;
-
-        let response_inner = response.into_inner();
-
-        if !response_inner.success {
-            return Err(LennardError::Processing(
-                format!("Letter regeneration failed: {}", response_inner.error_message)
-            ));
-        }
-
-        let letter_grpc = response_inner.letter
-            .ok_or_else(|| LennardError::Processing("No letter content in regeneration response".to_string()))?;
-
-        log::info!("Successfully regenerated letter with feedback");
-
-        // Convert gRPC letter content to our internal type
-        Ok(LetterContent {
-            subject: letter_grpc.betreff,
-            greeting: letter_grpc.anrede,
-            body: letter_grpc.brieftext,
-            sender_name: letter_grpc.sender_name,
+        // Build temporary ApprovalData to leverage GenerateLetterWithApproval which properly handles feedback
+        let temp_approval = crate::workflow::approval_types::ApprovalData {
+            approval_id: crate::workflow::approval_types::ApprovalId::new(),  // Generate random UUID for temporary approval
+            task_id: crate::workflow::approval_types::TaskId::new("retry".to_string()),
+            contact_id: crate::workflow::approval_types::ContactId::new(contact.id.clone()),
+            state: crate::workflow::approval_types::ApprovalState::NeedsImprovement,
             recipient_name: contact.full_name.clone(),
-            company_name: dossier_result.company_name.clone(),
-        })
+            recipient_email: contact.email.clone(),
+            recipient_title: None,  // ZohoContact doesn't have a title field
+            company_name: contact.company.clone().unwrap_or_else(|| dossier_result.company_name.clone()),
+            current_letter: letter.clone(),
+            letter_history: vec![
+                crate::workflow::approval_types::LetterHistoryEntry {
+                    iteration: 1,
+                    content: letter.clone(),
+                    feedback: None,
+                    created_at: Utc::now(),
+                }
+            ],
+            requested_at: Utc::now(),
+            requested_by: crate::workflow::approval_types::UserId::new(0),  // 0 = system-initiated retry
+            telegram_message_id: None,
+            telegram_chat_id: None,
+            updated_at: Utc::now(),
+            mailing_address: contact.mailing_address.clone(),
+            pdf_base64: None,
+            person_dossier: Some(dossier_result.person_dossier_content.clone()),
+            company_dossier: Some(dossier_result.company_dossier_content.clone()),
+            industry: None,
+            website: None,
+        };
+
+        // Use GenerateLetterWithApproval which properly handles feedback via approval context
+        log::info!("Calling generate_improved_letter_with_approval with feedback: {}", feedback);
+        self.generate_improved_letter_with_approval(&temp_approval, feedback).await
     }
 }

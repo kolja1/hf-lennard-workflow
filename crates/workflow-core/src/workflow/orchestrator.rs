@@ -293,13 +293,13 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
 
         // PDF generation with retry logic for page limit violations
         log::info!("Generating PDF for improved letter (with retry logic for page limits)");
-        const MAX_RETRIES: u32 = 3;
+        let max_retries = crate::constants::PDF_PAGE_LIMIT_MAX_RETRIES;
         let mut current_letter = improved_approval.current_letter.clone();
         let mut pdf_data: Option<Vec<u8>> = None;
         let mut last_error: Option<LennardError> = None;
 
-        for attempt in 1..=MAX_RETRIES {
-            log::info!("PDF generation attempt {}/{} for improved letter", attempt, MAX_RETRIES);
+        for attempt in 1..=max_retries {
+            log::info!("PDF generation attempt {}/{} for improved letter", attempt, max_retries);
 
             match self.steps.generate_pdf_with_address(&current_letter, mailing_address).await {
                 Ok(data) => {
@@ -312,12 +312,12 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
                               page_count, limit);
                     log::warn!("Error message: {}", message);
 
-                    if attempt >= MAX_RETRIES {
-                        log::error!("Max retries reached ({}), giving up on improved letter", MAX_RETRIES);
+                    if attempt >= max_retries {
+                        log::error!("Max retries reached ({}), giving up on improved letter", max_retries);
                         last_error = Some(LennardError::PageLimitExceeded {
                             page_count,
                             limit,
-                            message: format!("{} (failed after {} attempts with user feedback)", message, MAX_RETRIES)
+                            message: format!("{} (failed after {} attempts with user feedback)", message, max_retries)
                         });
                         break;
                     }
@@ -337,7 +337,7 @@ impl<T: WorkflowSteps> WorkflowOrchestrator<T> {
                     );
 
                     log::info!("Regenerating improved letter with automatic feedback (attempt {}/{}): {}",
-                              attempt + 1, MAX_RETRIES, auto_feedback);
+                              attempt + 1, max_retries, auto_feedback);
 
                     // Regenerate the improved letter with combined feedback (user + automatic length reduction)
                     match self.steps.generate_improved_letter(

@@ -261,13 +261,13 @@ impl WorkflowSteps for WorkflowProcessor {
 
         // Generate PDF with retry logic for page limit violations
         log::info!("Generating PDF for approval (with retry logic for page limits)");
-        const MAX_RETRIES: u32 = 3;
+        let max_retries = crate::constants::PDF_PAGE_LIMIT_MAX_RETRIES;
         let mut current_letter = letter.clone();
         let mut pdf_data: Option<Vec<u8>> = None;
         let mut last_error: Option<LennardError> = None;
 
-        for attempt in 1..=MAX_RETRIES {
-            log::info!("PDF generation attempt {}/{}", attempt, MAX_RETRIES);
+        for attempt in 1..=max_retries {
+            log::info!("PDF generation attempt {}/{}", attempt, max_retries);
 
             let pdf_template_data = PDFTemplateData::from_letter_and_address(&current_letter, mailing_address);
 
@@ -282,12 +282,12 @@ impl WorkflowSteps for WorkflowProcessor {
                               page_count, limit);
                     log::warn!("Error message: {}", message);
 
-                    if attempt >= MAX_RETRIES {
-                        log::error!("Max retries reached ({}), giving up", MAX_RETRIES);
+                    if attempt >= max_retries {
+                        log::error!("Max retries reached ({}), giving up", max_retries);
                         last_error = Some(LennardError::PageLimitExceeded {
                             page_count,
                             limit,
-                            message: format!("{} (failed after {} attempts)", message, MAX_RETRIES)
+                            message: format!("{} (failed after {} attempts)", message, max_retries)
                         });
                         break;
                     }
@@ -306,13 +306,14 @@ impl WorkflowSteps for WorkflowProcessor {
                         page_count, current_length, target_length, reduction_percentage
                     );
 
-                    log::info!("Regenerating letter with feedback (attempt {}/{}): {}", attempt + 1, MAX_RETRIES, feedback);
+                    log::info!("Regenerating letter with feedback (attempt {}/{}): {}", attempt + 1, max_retries, feedback);
 
                     // Regenerate the letter with feedback
                     match self.letter_service.regenerate_letter_with_feedback(
                         contact,
                         profile,
                         dossier,
+                        &current_letter,
                         &feedback
                     ).await {
                         Ok(new_letter) => {
